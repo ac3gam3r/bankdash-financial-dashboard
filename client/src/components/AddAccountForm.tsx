@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import { CalendarIcon, CreditCard, DollarSign } from "lucide-react";
+import { CalendarIcon, CreditCard, DollarSign, Building2, Wallet, TrendingUp, Home } from "lucide-react";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { format } from "date-fns";
@@ -65,11 +65,11 @@ const formSchema = insertAccountSchema.extend({
 type FormData = z.infer<typeof formSchema>;
 
 const accountTypes = [
-  { value: "checking", label: "Checking Account", icon: "🏛️" },
-  { value: "savings", label: "Savings Account", icon: "💰" },
-  { value: "credit", label: "Credit Card", icon: "💳" },
-  { value: "investment", label: "Investment Account", icon: "📈" },
-  { value: "loan", label: "Loan Account", icon: "🏠" },
+  { value: "checking", label: "Checking Account", icon: Building2 },
+  { value: "savings", label: "Savings Account", icon: Wallet },
+  { value: "credit", label: "Credit Card", icon: CreditCard },
+  { value: "investment", label: "Investment Account", icon: TrendingUp },
+  { value: "loan", label: "Loan Account", icon: Home },
 ];
 
 const rewardTypes = [
@@ -94,8 +94,7 @@ export default function AddAccountForm({ onSuccess, onCancel }: AddAccountFormPr
       accountType: "",
       balance: "0.00",
       bankName: "",
-      accountNumber: "",
-      routingNumber: "",
+      // Sensitive banking data fields removed for security
       creditLimit: "",
       annualFee: "0.00",
       rewardRate: "",
@@ -201,14 +200,17 @@ export default function AddAccountForm({ onSuccess, onCancel }: AddAccountFormPr
                     </SelectTrigger>
                   </FormControl>
                   <SelectContent>
-                    {accountTypes.map((type) => (
-                      <SelectItem key={type.value} value={type.value}>
-                        <span className="flex items-center gap-2">
-                          <span>{type.icon}</span>
-                          <span>{type.label}</span>
-                        </span>
-                      </SelectItem>
-                    ))}
+                    {accountTypes.map((type) => {
+                      const IconComponent = type.icon;
+                      return (
+                        <SelectItem key={type.value} value={type.value}>
+                          <span className="flex items-center gap-2">
+                            <IconComponent className="h-4 w-4" />
+                            <span>{type.label}</span>
+                          </span>
+                        </SelectItem>
+                      );
+                    })}
                   </SelectContent>
                 </Select>
                 <FormMessage />
@@ -260,28 +262,7 @@ export default function AddAccountForm({ onSuccess, onCancel }: AddAccountFormPr
               )}
             />
 
-            <FormField
-              control={form.control}
-              name="accountNumber"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Account Number</FormLabel>
-                  <FormControl>
-                    <Input 
-                      placeholder="Last 4 digits"
-                      maxLength={4}
-                      data-testid="input-account-number"
-                      {...field}
-                      value={field.value || ""}
-                    />
-                  </FormControl>
-                  <FormDescription>
-                    Optional: Last 4 digits for identification
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+            {/* Account number field removed for security - never collect sensitive banking data */}
           </div>
         </div>
 

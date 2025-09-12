@@ -215,11 +215,7 @@ export default function AccountsPage() {
                       </div>
                     </div>
                     
-                    {account.accountNumber && (
-                      <div className="text-sm text-muted-foreground">
-                        •••• {account.accountNumber}
-                      </div>
-                    )}
+                    {/* Account number display removed for security */}
                   </div>
                 </CardContent>
               </Card>

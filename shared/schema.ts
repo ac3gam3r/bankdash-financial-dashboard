@@ -44,8 +44,7 @@ export const accounts = pgTable("accounts", {
   accountType: text("account_type").notNull(), // checking, savings, credit, investment, loan
   balance: decimal("balance", { precision: 12, scale: 2 }).notNull(),
   bankName: text("bank_name").notNull(),
-  accountNumber: text("account_number"), // Last 4 digits for identification
-  routingNumber: text("routing_number"),
+  // Note: Account and routing numbers removed for security - never store sensitive banking data unencrypted
   
   // Credit card specific fields
   creditLimit: decimal("credit_limit", { precision: 12, scale: 2 }),

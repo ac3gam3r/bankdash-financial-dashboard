@@ -99,9 +99,9 @@ export default function Landing() {
             <Card className="hover-elevate">
               <CardHeader>
                 <Shield className="h-12 w-12 text-primary mb-4" />
-                <CardTitle>Bank-Level Security</CardTitle>
+                <CardTitle>Access Controls</CardTitle>
                 <CardDescription>
-                  Your financial data is protected with enterprise-grade encryption and security measures
+                  Your financial data is protected with user authentication and proper access controls
                 </CardDescription>
               </CardHeader>
             </Card>

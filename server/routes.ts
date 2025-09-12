@@ -133,9 +133,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.patch("/api/accounts/:id", isAuthenticated, async (req: any, res) => {
     try {
       const { id } = req.params;
-      const updateData = insertAccountSchema.partial().parse(req.body);
-      const account = await storage.updateAccount(id, updateData);
-      res.json(account);
+      const userId = req.user.claims.sub;
+      const parsedData = insertAccountSchema.partial().parse(req.body);
+      
+      // CRITICAL SECURITY: Strip ownership fields to prevent tampering
+      const { userId: _, ...updateData } = parsedData as any;
+      
+      // Use secure user-aware update method
+      const account = await storage.updateUserAccount(userId, id, updateData);
+      
+      if (account) {
+        res.json(account);
+      } else {
+        res.status(404).json({ message: "Account not found" });
+      }
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: "Invalid account data", errors: error.errors });
@@ -149,7 +160,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.delete("/api/accounts/:id", isAuthenticated, async (req: any, res) => {
     try {
       const { id } = req.params;
-      const success = await storage.deleteAccount(id);
+      const userId = req.user.claims.sub;
+      
+      // Use secure user-aware delete method
+      const success = await storage.deleteUserAccount(userId, id);
+      
       if (success) {
         res.status(204).send();
       } else {
@@ -166,7 +181,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Create transaction
   app.post("/api/transactions", isAuthenticated, async (req: any, res) => {
     try {
+      const userId = req.user.claims.sub;
       const transactionData = insertTransactionSchema.parse(req.body);
+      
+      // CRITICAL SECURITY: Verify the accountId belongs to the authenticated user
+      if (transactionData.accountId) {
+        const account = await storage.getUserAccount(userId, transactionData.accountId);
+        if (!account) {
+          return res.status(404).json({ message: "Account not found" });
+        }
+      }
+      
       const transaction = await storage.createTransaction(transactionData);
       res.status(201).json(transaction);
     } catch (error) {
@@ -182,7 +207,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/transactions/:id", isAuthenticated, async (req: any, res) => {
     try {
       const { id } = req.params;
-      const transaction = await storage.getTransaction(id);
+      const userId = req.user.claims.sub;
+      
+      // Use secure user-aware method to verify ownership
+      const transaction = await storage.getUserTransaction(userId, id);
+      
       if (transaction) {
         res.json(transaction);
       } else {
@@ -198,9 +227,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.patch("/api/transactions/:id", isAuthenticated, async (req: any, res) => {
     try {
       const { id } = req.params;
+      const userId = req.user.claims.sub;
       const updateData = insertTransactionSchema.partial().parse(req.body);
-      const transaction = await storage.updateTransaction(id, updateData);
-      res.json(transaction);
+      
+      // CRITICAL SECURITY: Strip ownership fields to prevent tampering
+      const { accountId: _, userId: __, ...safeUpdates } = updateData as any;
+      
+      // Use secure user-aware update method
+      const transaction = await storage.updateUserTransaction(userId, id, safeUpdates);
+      
+      if (transaction) {
+        res.json(transaction);
+      } else {
+        res.status(404).json({ message: "Transaction not found" });
+      }
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: "Invalid transaction data", errors: error.errors });
@@ -214,7 +254,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.delete("/api/transactions/:id", isAuthenticated, async (req: any, res) => {
     try {
       const { id } = req.params;
-      const success = await storage.deleteTransaction(id);
+      const userId = req.user.claims.sub;
+      
+      // Use secure user-aware delete method
+      const success = await storage.deleteUserTransaction(userId, id);
+      
       if (success) {
         res.status(204).send();
       } else {
@@ -278,9 +322,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.patch("/api/categories/:id", isAuthenticated, async (req: any, res) => {
     try {
       const { id } = req.params;
+      const userId = req.user.claims.sub;
       const updateData = insertCategorySchema.partial().parse(req.body);
-      const category = await storage.updateCategory(id, updateData);
-      res.json(category);
+      
+      // CRITICAL SECURITY: Strip ownership fields to prevent tampering
+      const { userId: _, ...safeUpdates } = updateData as any;
+      
+      const category = await storage.updateUserCategory(userId, id, safeUpdates);
+      if (category) {
+        res.json(category);
+      } else {
+        res.status(404).json({ message: "Category not found" });
+      }
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: "Invalid category data", errors: error.errors });
@@ -294,7 +347,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.delete("/api/categories/:id", isAuthenticated, async (req: any, res) => {
     try {
       const { id } = req.params;
-      const success = await storage.deleteCategory(id);
+      const userId = req.user.claims.sub;
+      const success = await storage.deleteUserCategory(userId, id);
       if (success) {
         res.status(204).send();
       } else {
@@ -340,9 +394,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.patch("/api/credit-scores/:id", isAuthenticated, async (req: any, res) => {
     try {
       const { id } = req.params;
+      const userId = req.user.claims.sub;
       const updateData = insertCreditScoreSchema.partial().parse(req.body);
-      const creditScore = await storage.updateCreditScore(id, updateData);
-      res.json(creditScore);
+      
+      // CRITICAL SECURITY: Strip ownership fields to prevent tampering
+      const { userId: _, ...safeUpdates } = updateData as any;
+      
+      const creditScore = await storage.updateUserCreditScore(userId, id, safeUpdates);
+      if (creditScore) {
+        res.json(creditScore);
+      } else {
+        res.status(404).json({ message: "Credit score not found" });
+      }
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: "Invalid credit score data", errors: error.errors });
@@ -356,7 +419,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.delete("/api/credit-scores/:id", isAuthenticated, async (req: any, res) => {
     try {
       const { id } = req.params;
-      const success = await storage.deleteCreditScore(id);
+      const userId = req.user.claims.sub;
+      const success = await storage.deleteUserCreditScore(userId, id);
       if (success) {
         res.status(204).send();
       } else {
@@ -390,9 +454,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.patch("/api/bank-bonuses/:id", isAuthenticated, async (req: any, res) => {
     try {
       const { id } = req.params;
+      const userId = req.user.claims.sub;
       const updateData = insertBankBonusSchema.partial().parse(req.body);
-      const bonus = await storage.updateBankBonus(id, updateData);
-      res.json(bonus);
+      
+      // CRITICAL SECURITY: Strip ownership fields to prevent tampering
+      const { userId: _, ...safeUpdates } = updateData as any;
+      
+      const bonus = await storage.updateUserBankBonus(userId, id, safeUpdates);
+      if (bonus) {
+        res.json(bonus);
+      } else {
+        res.status(404).json({ message: "Bank bonus not found" });
+      }
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: "Invalid bank bonus data", errors: error.errors });
@@ -406,7 +479,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.delete("/api/bank-bonuses/:id", isAuthenticated, async (req: any, res) => {
     try {
       const { id } = req.params;
-      const success = await storage.deleteBankBonus(id);
+      const userId = req.user.claims.sub;
+      const success = await storage.deleteUserBankBonus(userId, id);
       if (success) {
         res.status(204).send();
       } else {
@@ -440,9 +514,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.patch("/api/credit-card-bonuses/:id", isAuthenticated, async (req: any, res) => {
     try {
       const { id } = req.params;
+      const userId = req.user.claims.sub;
       const updateData = insertCreditCardBonusSchema.partial().parse(req.body);
-      const bonus = await storage.updateCreditCardBonus(id, updateData);
-      res.json(bonus);
+      
+      // CRITICAL SECURITY: Strip ownership fields to prevent tampering
+      const { userId: _, ...safeUpdates } = updateData as any;
+      
+      const bonus = await storage.updateUserCreditCardBonus(userId, id, safeUpdates);
+      if (bonus) {
+        res.json(bonus);
+      } else {
+        res.status(404).json({ message: "Credit card bonus not found" });
+      }
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: "Invalid credit card bonus data", errors: error.errors });
@@ -456,7 +539,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.delete("/api/credit-card-bonuses/:id", isAuthenticated, async (req: any, res) => {
     try {
       const { id } = req.params;
-      const success = await storage.deleteCreditCardBonus(id);
+      const userId = req.user.claims.sub;
+      const success = await storage.deleteUserCreditCardBonus(userId, id);
       if (success) {
         res.status(204).send();
       } else {
@@ -490,9 +574,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.patch("/api/recurring-payments/:id", isAuthenticated, async (req: any, res) => {
     try {
       const { id } = req.params;
+      const userId = req.user.claims.sub;
       const updateData = insertRecurringPaymentSchema.partial().parse(req.body);
-      const payment = await storage.updateRecurringPayment(id, updateData);
-      res.json(payment);
+      
+      // CRITICAL SECURITY: Strip ownership fields to prevent tampering
+      const { userId: _, accountId: __, ...safeUpdates } = updateData as any;
+      
+      const payment = await storage.updateUserRecurringPayment(userId, id, safeUpdates);
+      if (payment) {
+        res.json(payment);
+      } else {
+        res.status(404).json({ message: "Recurring payment not found" });
+      }
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: "Invalid recurring payment data", errors: error.errors });
@@ -506,7 +599,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.delete("/api/recurring-payments/:id", isAuthenticated, async (req: any, res) => {
     try {
       const { id } = req.params;
-      const success = await storage.deleteRecurringPayment(id);
+      const userId = req.user.claims.sub;
+      const success = await storage.deleteUserRecurringPayment(userId, id);
       if (success) {
         res.status(204).send();
       } else {
@@ -552,9 +646,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.patch("/api/trips/:id", isAuthenticated, async (req: any, res) => {
     try {
       const { id } = req.params;
+      const userId = req.user.claims.sub;
       const updateData = insertTripSchema.partial().parse(req.body);
-      const trip = await storage.updateTrip(id, updateData);
-      res.json(trip);
+      
+      // CRITICAL SECURITY: Strip ownership fields to prevent tampering
+      const { userId: _, ...safeUpdates } = updateData as any;
+      
+      const trip = await storage.updateUserTrip(userId, id, safeUpdates);
+      if (trip) {
+        res.json(trip);
+      } else {
+        res.status(404).json({ message: "Trip not found" });
+      }
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: "Invalid trip data", errors: error.errors });
@@ -568,7 +671,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.delete("/api/trips/:id", isAuthenticated, async (req: any, res) => {
     try {
       const { id } = req.params;
-      const success = await storage.deleteTrip(id);
+      const userId = req.user.claims.sub;
+      const success = await storage.deleteUserTrip(userId, id);
       if (success) {
         res.status(204).send();
       } else {

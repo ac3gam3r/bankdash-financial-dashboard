@@ -44,7 +44,7 @@ export default function AddAccountDialog({ trigger, children }: AddAccountDialog
           <DialogTitle>Add New Account</DialogTitle>
           <DialogDescription>
             Add a new bank account or credit card to track your finances. 
-            All information is stored securely and only visible to you.
+            Information is stored with user authentication and access controls.
           </DialogDescription>
         </DialogHeader>
         <AddAccountForm 

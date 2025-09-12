@@ -42,9 +42,12 @@ export interface IStorage {
   // Account operations
   getUserAccounts(userId: string): Promise<Account[]>;
   getAccount(accountId: string): Promise<Account | undefined>;
+  getUserAccount(userId: string, accountId: string): Promise<Account | undefined>;
   createAccount(account: InsertAccount): Promise<Account>;
   updateAccount(accountId: string, updates: Partial<InsertAccount>): Promise<Account>;
+  updateUserAccount(userId: string, accountId: string, updates: Partial<InsertAccount>): Promise<Account | null>;
   deleteAccount(accountId: string): Promise<boolean>;
+  deleteUserAccount(userId: string, accountId: string): Promise<boolean>;
   
   // Transaction operations
   getAccountTransactions(accountId: string, limit?: number, offset?: number): Promise<Transaction[]>;
@@ -52,37 +55,49 @@ export interface IStorage {
   getTransactionsByDateRange(userId: string, startDate: Date, endDate: Date): Promise<Transaction[]>;
   getTransactionsByCategory(userId: string, category: string): Promise<Transaction[]>;
   getTransaction(transactionId: string): Promise<Transaction | undefined>;
+  getUserTransaction(userId: string, transactionId: string): Promise<Transaction | undefined>;
   createTransaction(transaction: InsertTransaction): Promise<Transaction>;
   updateTransaction(transactionId: string, updates: Partial<InsertTransaction>): Promise<Transaction>;
+  updateUserTransaction(userId: string, transactionId: string, updates: Partial<InsertTransaction>): Promise<Transaction | null>;
   deleteTransaction(transactionId: string): Promise<boolean>;
+  deleteUserTransaction(userId: string, transactionId: string): Promise<boolean>;
   
   // Category operations
   getUserCategories(userId?: string): Promise<Category[]>; // null for system categories
   getCategory(categoryId: string): Promise<Category | undefined>;
+  getUserCategory(userId: string, categoryId: string): Promise<Category | undefined>;
   createCategory(category: InsertCategory): Promise<Category>;
   updateCategory(categoryId: string, updates: Partial<InsertCategory>): Promise<Category>;
+  updateUserCategory(userId: string, categoryId: string, updates: Partial<InsertCategory>): Promise<Category | null>;
   deleteCategory(categoryId: string): Promise<boolean>;
+  deleteUserCategory(userId: string, categoryId: string): Promise<boolean>;
   
   // Credit score operations
   getUserCreditScores(userId: string): Promise<CreditScore[]>;
   getLatestCreditScore(userId: string, bureau?: string): Promise<CreditScore | undefined>;
   createCreditScore(creditScore: InsertCreditScore): Promise<CreditScore>;
   updateCreditScore(creditScoreId: string, updates: Partial<InsertCreditScore>): Promise<CreditScore>;
+  updateUserCreditScore(userId: string, creditScoreId: string, updates: Partial<InsertCreditScore>): Promise<CreditScore | null>;
   deleteCreditScore(creditScoreId: string): Promise<boolean>;
+  deleteUserCreditScore(userId: string, creditScoreId: string): Promise<boolean>;
   
   // Bank bonus operations
   getUserBankBonuses(userId: string): Promise<BankBonus[]>;
   getBankBonus(bonusId: string): Promise<BankBonus | undefined>;
   createBankBonus(bonus: InsertBankBonus): Promise<BankBonus>;
   updateBankBonus(bonusId: string, updates: Partial<InsertBankBonus>): Promise<BankBonus>;
+  updateUserBankBonus(userId: string, bonusId: string, updates: Partial<InsertBankBonus>): Promise<BankBonus | null>;
   deleteBankBonus(bonusId: string): Promise<boolean>;
+  deleteUserBankBonus(userId: string, bonusId: string): Promise<boolean>;
   
   // Credit card bonus operations
   getUserCreditCardBonuses(userId: string): Promise<CreditCardBonus[]>;
   getCreditCardBonus(bonusId: string): Promise<CreditCardBonus | undefined>;
   createCreditCardBonus(bonus: InsertCreditCardBonus): Promise<CreditCardBonus>;
   updateCreditCardBonus(bonusId: string, updates: Partial<InsertCreditCardBonus>): Promise<CreditCardBonus>;
+  updateUserCreditCardBonus(userId: string, bonusId: string, updates: Partial<InsertCreditCardBonus>): Promise<CreditCardBonus | null>;
   deleteCreditCardBonus(bonusId: string): Promise<boolean>;
+  deleteUserCreditCardBonus(userId: string, bonusId: string): Promise<boolean>;
   
   // Recurring payment operations
   getUserRecurringPayments(userId: string): Promise<RecurringPayment[]>;
@@ -90,14 +105,18 @@ export interface IStorage {
   getRecurringPayment(paymentId: string): Promise<RecurringPayment | undefined>;
   createRecurringPayment(payment: InsertRecurringPayment): Promise<RecurringPayment>;
   updateRecurringPayment(paymentId: string, updates: Partial<InsertRecurringPayment>): Promise<RecurringPayment>;
+  updateUserRecurringPayment(userId: string, paymentId: string, updates: Partial<InsertRecurringPayment>): Promise<RecurringPayment | null>;
   deleteRecurringPayment(paymentId: string): Promise<boolean>;
+  deleteUserRecurringPayment(userId: string, paymentId: string): Promise<boolean>;
   
   // Trip operations
   getUserTrips(userId: string): Promise<Trip[]>;
   getTrip(tripId: string): Promise<Trip | undefined>;
   createTrip(trip: InsertTrip): Promise<Trip>;
   updateTrip(tripId: string, updates: Partial<InsertTrip>): Promise<Trip>;
+  updateUserTrip(userId: string, tripId: string, updates: Partial<InsertTrip>): Promise<Trip | null>;
   deleteTrip(tripId: string): Promise<boolean>;
+  deleteUserTrip(userId: string, tripId: string): Promise<boolean>;
   
   // Reward redemption operations
   getUserRewardRedemptions(userId: string): Promise<RewardRedemption[]>;
@@ -150,6 +169,14 @@ export class DatabaseStorage implements IStorage {
     return account;
   }
 
+  async getUserAccount(userId: string, accountId: string): Promise<Account | undefined> {
+    const [account] = await db
+      .select()
+      .from(accounts)
+      .where(and(eq(accounts.id, accountId), eq(accounts.userId, userId)));
+    return account;
+  }
+
   async createAccount(account: InsertAccount): Promise<Account> {
     const [newAccount] = await db
       .insert(accounts)
@@ -167,10 +194,29 @@ export class DatabaseStorage implements IStorage {
     return updatedAccount;
   }
 
+  async updateUserAccount(userId: string, accountId: string, updates: Partial<InsertAccount>): Promise<Account | null> {
+    // Strip userId from updates to prevent tampering
+    const { userId: _, ...safeUpdates } = updates as any;
+    
+    const [updatedAccount] = await db
+      .update(accounts)
+      .set({ ...safeUpdates, updatedAt: new Date() })
+      .where(and(eq(accounts.id, accountId), eq(accounts.userId, userId)))
+      .returning();
+    return updatedAccount || null;
+  }
+
   async deleteAccount(accountId: string): Promise<boolean> {
     const result = await db
       .delete(accounts)
       .where(eq(accounts.id, accountId));
+    return (result.rowCount || 0) > 0;
+  }
+
+  async deleteUserAccount(userId: string, accountId: string): Promise<boolean> {
+    const result = await db
+      .delete(accounts)
+      .where(and(eq(accounts.id, accountId), eq(accounts.userId, userId)));
     return (result.rowCount || 0) > 0;
   }
 
@@ -320,6 +366,15 @@ export class DatabaseStorage implements IStorage {
     return transaction;
   }
 
+  async getUserTransaction(userId: string, transactionId: string): Promise<Transaction | undefined> {
+    const [transaction] = await db
+      .select()
+      .from(transactions)
+      .innerJoin(accounts, eq(transactions.accountId, accounts.id))
+      .where(and(eq(transactions.id, transactionId), eq(accounts.userId, userId)));
+    return transaction;
+  }
+
   async createTransaction(transaction: InsertTransaction): Promise<Transaction> {
     const [newTransaction] = await db
       .insert(transactions)
@@ -337,7 +392,42 @@ export class DatabaseStorage implements IStorage {
     return updatedTransaction;
   }
 
+  async updateUserTransaction(userId: string, transactionId: string, updates: Partial<InsertTransaction>): Promise<Transaction | null> {
+    // CRITICAL SECURITY: Strip ownership fields to prevent tampering
+    const { accountId: _, userId: __, ...safeUpdates } = updates as any;
+    
+    // CRITICAL SECURITY: First verify transaction belongs to user's account
+    const existingTransaction = await this.getUserTransaction(userId, transactionId);
+    if (!existingTransaction) {
+      return null;
+    }
+    
+    // CRITICAL SECURITY: Update with explicit constraint by transaction ID
+    // Since we've verified ownership above, this is safe
+    const [updatedTransaction] = await db
+      .update(transactions)
+      .set({ ...safeUpdates, updatedAt: new Date() })
+      .where(eq(transactions.id, transactionId))
+      .returning();
+    return updatedTransaction || null;
+  }
+
   async deleteTransaction(transactionId: string): Promise<boolean> {
+    const result = await db
+      .delete(transactions)
+      .where(eq(transactions.id, transactionId));
+    return (result.rowCount || 0) > 0;
+  }
+
+  async deleteUserTransaction(userId: string, transactionId: string): Promise<boolean> {
+    // CRITICAL SECURITY: First verify transaction belongs to user's account
+    const existingTransaction = await this.getUserTransaction(userId, transactionId);
+    if (!existingTransaction) {
+      return false;
+    }
+    
+    // CRITICAL SECURITY: Delete with explicit constraint by transaction ID
+    // Since we've verified ownership above, this is safe
     const result = await db
       .delete(transactions)
       .where(eq(transactions.id, transactionId));
@@ -387,10 +477,37 @@ export class DatabaseStorage implements IStorage {
     return updatedCategory;
   }
 
+  async getUserCategory(userId: string, categoryId: string): Promise<Category | undefined> {
+    const [category] = await db
+      .select()
+      .from(categories)
+      .where(and(eq(categories.id, categoryId), eq(categories.userId, userId)));
+    return category;
+  }
+
+  async updateUserCategory(userId: string, categoryId: string, updates: Partial<InsertCategory>): Promise<Category | null> {
+    // Strip userId from updates to prevent tampering
+    const { userId: _, ...safeUpdates } = updates as any;
+    
+    const [updatedCategory] = await db
+      .update(categories)
+      .set({ ...safeUpdates, updatedAt: new Date() })
+      .where(and(eq(categories.id, categoryId), eq(categories.userId, userId)))
+      .returning();
+    return updatedCategory || null;
+  }
+
   async deleteCategory(categoryId: string): Promise<boolean> {
     const result = await db
       .delete(categories)
       .where(eq(categories.id, categoryId));
+    return (result.rowCount || 0) > 0;
+  }
+
+  async deleteUserCategory(userId: string, categoryId: string): Promise<boolean> {
+    const result = await db
+      .delete(categories)
+      .where(and(eq(categories.id, categoryId), eq(categories.userId, userId)));
     return (result.rowCount || 0) > 0;
   }
 
@@ -440,10 +557,29 @@ export class DatabaseStorage implements IStorage {
     return updatedScore;
   }
 
+  async updateUserCreditScore(userId: string, creditScoreId: string, updates: Partial<InsertCreditScore>): Promise<CreditScore | null> {
+    // Strip userId from updates to prevent tampering
+    const { userId: _, ...safeUpdates } = updates as any;
+    
+    const [updatedScore] = await db
+      .update(creditScores)
+      .set(safeUpdates)
+      .where(and(eq(creditScores.id, creditScoreId), eq(creditScores.userId, userId)))
+      .returning();
+    return updatedScore || null;
+  }
+
   async deleteCreditScore(creditScoreId: string): Promise<boolean> {
     const result = await db
       .delete(creditScores)
       .where(eq(creditScores.id, creditScoreId));
+    return (result.rowCount || 0) > 0;
+  }
+
+  async deleteUserCreditScore(userId: string, creditScoreId: string): Promise<boolean> {
+    const result = await db
+      .delete(creditScores)
+      .where(and(eq(creditScores.id, creditScoreId), eq(creditScores.userId, userId)));
     return (result.rowCount || 0) > 0;
   }
 
@@ -481,10 +617,29 @@ export class DatabaseStorage implements IStorage {
     return updatedBonus;
   }
 
+  async updateUserBankBonus(userId: string, bonusId: string, updates: Partial<InsertBankBonus>): Promise<BankBonus | null> {
+    // Strip userId from updates to prevent tampering
+    const { userId: _, ...safeUpdates } = updates as any;
+    
+    const [updatedBonus] = await db
+      .update(bankBonuses)
+      .set(safeUpdates)
+      .where(and(eq(bankBonuses.id, bonusId), eq(bankBonuses.userId, userId)))
+      .returning();
+    return updatedBonus || null;
+  }
+
   async deleteBankBonus(bonusId: string): Promise<boolean> {
     const result = await db
       .delete(bankBonuses)
       .where(eq(bankBonuses.id, bonusId));
+    return (result.rowCount || 0) > 0;
+  }
+
+  async deleteUserBankBonus(userId: string, bonusId: string): Promise<boolean> {
+    const result = await db
+      .delete(bankBonuses)
+      .where(and(eq(bankBonuses.id, bonusId), eq(bankBonuses.userId, userId)));
     return (result.rowCount || 0) > 0;
   }
 
@@ -522,10 +677,27 @@ export class DatabaseStorage implements IStorage {
     return updatedBonus;
   }
 
+  async updateUserCreditCardBonus(userId: string, bonusId: string, updates: Partial<InsertCreditCardBonus>): Promise<CreditCardBonus | null> {
+    const { userId: _, ...safeUpdates } = updates as any;
+    const [updatedBonus] = await db
+      .update(creditCardBonuses)
+      .set(safeUpdates)
+      .where(and(eq(creditCardBonuses.id, bonusId), eq(creditCardBonuses.userId, userId)))
+      .returning();
+    return updatedBonus || null;
+  }
+
   async deleteCreditCardBonus(bonusId: string): Promise<boolean> {
     const result = await db
       .delete(creditCardBonuses)
       .where(eq(creditCardBonuses.id, bonusId));
+    return (result.rowCount || 0) > 0;
+  }
+
+  async deleteUserCreditCardBonus(userId: string, bonusId: string): Promise<boolean> {
+    const result = await db
+      .delete(creditCardBonuses)
+      .where(and(eq(creditCardBonuses.id, bonusId), eq(creditCardBonuses.userId, userId)));
     return (result.rowCount || 0) > 0;
   }
 
@@ -576,10 +748,27 @@ export class DatabaseStorage implements IStorage {
     return updatedPayment;
   }
 
+  async updateUserRecurringPayment(userId: string, paymentId: string, updates: Partial<InsertRecurringPayment>): Promise<RecurringPayment | null> {
+    const { userId: _, ...safeUpdates } = updates as any;
+    const [updatedPayment] = await db
+      .update(recurringPayments)
+      .set(safeUpdates)
+      .where(and(eq(recurringPayments.id, paymentId), eq(recurringPayments.userId, userId)))
+      .returning();
+    return updatedPayment || null;
+  }
+
   async deleteRecurringPayment(paymentId: string): Promise<boolean> {
     const result = await db
       .delete(recurringPayments)
       .where(eq(recurringPayments.id, paymentId));
+    return (result.rowCount || 0) > 0;
+  }
+
+  async deleteUserRecurringPayment(userId: string, paymentId: string): Promise<boolean> {
+    const result = await db
+      .delete(recurringPayments)
+      .where(and(eq(recurringPayments.id, paymentId), eq(recurringPayments.userId, userId)));
     return (result.rowCount || 0) > 0;
   }
 
@@ -617,10 +806,27 @@ export class DatabaseStorage implements IStorage {
     return updatedTrip;
   }
 
+  async updateUserTrip(userId: string, tripId: string, updates: Partial<InsertTrip>): Promise<Trip | null> {
+    const { userId: _, ...safeUpdates } = updates as any;
+    const [updatedTrip] = await db
+      .update(trips)
+      .set(safeUpdates)
+      .where(and(eq(trips.id, tripId), eq(trips.userId, userId)))
+      .returning();
+    return updatedTrip || null;
+  }
+
   async deleteTrip(tripId: string): Promise<boolean> {
     const result = await db
       .delete(trips)
       .where(eq(trips.id, tripId));
+    return (result.rowCount || 0) > 0;
+  }
+
+  async deleteUserTrip(userId: string, tripId: string): Promise<boolean> {
+    const result = await db
+      .delete(trips)
+      .where(and(eq(trips.id, tripId), eq(trips.userId, userId)));
     return (result.rowCount || 0) > 0;
   }
 
