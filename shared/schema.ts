@@ -328,6 +328,69 @@ export const rewardRedemptions = pgTable("reward_redemptions", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// Bank connection tracking for data integration
+export const bankConnections = pgTable("bank_connections", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull(),
+  bankName: text("bank_name").notNull(),
+  accountType: text("account_type").notNull(), // checking, savings, credit
+  accountNumber: text("account_number").notNull(), // Last 4 digits only for display
+  isConnected: boolean("is_connected").default(true),
+  lastSync: timestamp("last_sync").defaultNow(),
+  status: text("status").notNull().default('active'), // active, error, pending, disconnected
+  transactionCount: integer("transaction_count").default(0),
+  
+  // Connection metadata
+  institutionId: varchar("institution_id"), // External bank/institution ID
+  accessToken: text("access_token"), // Encrypted token for API access
+  refreshToken: text("refresh_token"), // Encrypted refresh token
+  connectionMethod: text("connection_method").default('manual'), // manual, plaid, yodlee, etc.
+  
+  // Error tracking
+  lastError: text("last_error"),
+  errorCount: integer("error_count").default(0),
+  
+  // Sync configuration
+  autoSync: boolean("auto_sync").default(true),
+  syncFrequency: text("sync_frequency").default('daily'), // daily, weekly, manual
+  
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Bank provider definitions for supported institutions
+export const bankProviders = pgTable("bank_providers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  displayName: text("display_name").notNull(),
+  logo: text("logo"), // URL to bank logo
+  website: text("website"),
+  
+  // Supported account types for this provider
+  accountTypes: text("account_types").array().notNull(), // ["checking", "savings", "credit"]
+  
+  // Provider capabilities
+  supportsAutoSync: boolean("supports_auto_sync").default(false),
+  supportsTransactionSync: boolean("supports_transaction_sync").default(true),
+  supportsBalanceSync: boolean("supports_balance_sync").default(true),
+  
+  // Integration details
+  connectionMethod: text("connection_method").notNull(), // manual, plaid, yodlee, api
+  apiEndpoint: text("api_endpoint"),
+  requiresCredentials: boolean("requires_credentials").default(true),
+  
+  // Provider status
+  isActive: boolean("is_active").default(true),
+  isPopular: boolean("is_popular").default(false),
+  
+  // Metadata
+  description: text("description"),
+  setupInstructions: text("setup_instructions"),
+  
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 // Zod schemas for validation
 export const upsertUserSchema = createInsertSchema(users);
 export const insertAccountSchema = createInsertSchema(accounts).omit({
@@ -375,6 +438,18 @@ export const insertRewardRedemptionSchema = createInsertSchema(rewardRedemptions
   id: true,
   createdAt: true,
 });
+export const insertBankConnectionSchema = createInsertSchema(bankConnections).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+}).extend({
+  lastSync: z.coerce.date().optional(), // Accept ISO strings and convert to Date objects
+});
+export const insertBankProviderSchema = createInsertSchema(bankProviders).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
 
 // TypeScript types
 export type UpsertUser = z.infer<typeof upsertUserSchema>;
@@ -397,3 +472,7 @@ export type Trip = typeof trips.$inferSelect;
 export type InsertTrip = z.infer<typeof insertTripSchema>;
 export type RewardRedemption = typeof rewardRedemptions.$inferSelect;
 export type InsertRewardRedemption = z.infer<typeof insertRewardRedemptionSchema>;
+export type BankConnection = typeof bankConnections.$inferSelect;
+export type InsertBankConnection = z.infer<typeof insertBankConnectionSchema>;
+export type BankProvider = typeof bankProviders.$inferSelect;
+export type InsertBankProvider = z.infer<typeof insertBankProviderSchema>;

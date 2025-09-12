@@ -29,6 +29,12 @@ import {
   type InsertTrip,
   type RewardRedemption,
   type InsertRewardRedemption,
+  bankConnections,
+  bankProviders,
+  type BankConnection,
+  type InsertBankConnection,
+  type BankProvider,
+  type InsertBankProvider,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, desc, asc, gte, lte, sql } from "drizzle-orm";
@@ -128,6 +134,16 @@ export interface IStorage {
   getUserMonthlySpending(userId: string, year: number, month: number): Promise<number>;
   getCategorySpending(userId: string, categoryName: string, startDate: Date, endDate: Date): Promise<number>;
   getUserTotalRewards(userId: string): Promise<number>;
+  
+  // Bank connection operations
+  getUserBankConnections(userId: string): Promise<BankConnection[]>;
+  getBankConnection(connectionId: string): Promise<BankConnection | undefined>;
+  getUserBankConnection(userId: string, connectionId: string): Promise<BankConnection | undefined>;
+  createBankConnection(connection: InsertBankConnection): Promise<BankConnection>;
+  updateBankConnection(connectionId: string, updates: Partial<InsertBankConnection>): Promise<BankConnection | null>;
+  updateUserBankConnection(userId: string, connectionId: string, updates: Partial<InsertBankConnection>): Promise<BankConnection | null>;
+  deleteBankConnection(userId: string, connectionId: string): Promise<boolean>;
+  getBankProviders(): Promise<BankProvider[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -367,12 +383,41 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getUserTransaction(userId: string, transactionId: string): Promise<Transaction | undefined> {
-    const [transaction] = await db
-      .select()
+    const [result] = await db
+      .select({
+        id: transactions.id,
+        accountId: transactions.accountId,
+        amount: transactions.amount,
+        description: transactions.description,
+        merchantName: transactions.merchantName,
+        category: transactions.category,
+        subcategory: transactions.subcategory,
+        date: transactions.date,
+        type: transactions.type,
+        rewardsEarned: transactions.rewardsEarned,
+        rewardCategory: transactions.rewardCategory,
+        bonusRewardRate: transactions.bonusRewardRate,
+        location: transactions.location,
+        isTravel: transactions.isTravel,
+        tripId: transactions.tripId,
+        isRecurring: transactions.isRecurring,
+        recurringPaymentId: transactions.recurringPaymentId,
+        referenceNumber: transactions.referenceNumber,
+        checkNumber: transactions.checkNumber,
+        isTaxDeductible: transactions.isTaxDeductible,
+        isBusinessExpense: transactions.isBusinessExpense,
+        taxCategory: transactions.taxCategory,
+        status: transactions.status,
+        isPending: transactions.isPending,
+        tags: transactions.tags,
+        notes: transactions.notes,
+        createdAt: transactions.createdAt,
+        updatedAt: transactions.updatedAt,
+      })
       .from(transactions)
       .innerJoin(accounts, eq(transactions.accountId, accounts.id))
       .where(and(eq(transactions.id, transactionId), eq(accounts.userId, userId)));
-    return transaction;
+    return result;
   }
 
   async createTransaction(transaction: InsertTransaction): Promise<Transaction> {
@@ -928,6 +973,87 @@ export class DatabaseStorage implements IStorage {
       );
     
     return result[0]?.total || 0;
+  }
+
+  // Bank connection operations (database storage)
+  async getUserBankConnections(userId: string): Promise<BankConnection[]> {
+    return await db
+      .select()
+      .from(bankConnections)
+      .where(eq(bankConnections.userId, userId))
+      .orderBy(desc(bankConnections.createdAt));
+  }
+
+  async getBankConnection(connectionId: string): Promise<BankConnection | undefined> {
+    const [connection] = await db
+      .select()
+      .from(bankConnections)
+      .where(eq(bankConnections.id, connectionId));
+    return connection;
+  }
+
+  async getUserBankConnection(userId: string, connectionId: string): Promise<BankConnection | undefined> {
+    const [connection] = await db
+      .select()
+      .from(bankConnections)
+      .where(
+        and(
+          eq(bankConnections.id, connectionId),
+          eq(bankConnections.userId, userId)
+        )
+      );
+    return connection;
+  }
+
+  async createBankConnection(connection: InsertBankConnection): Promise<BankConnection> {
+    const [newConnection] = await db
+      .insert(bankConnections)
+      .values(connection)
+      .returning();
+    return newConnection;
+  }
+
+  async updateBankConnection(connectionId: string, updates: Partial<InsertBankConnection>): Promise<BankConnection | null> {
+    const [updatedConnection] = await db
+      .update(bankConnections)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(bankConnections.id, connectionId))
+      .returning();
+    return updatedConnection || null;
+  }
+
+  async updateUserBankConnection(userId: string, connectionId: string, updates: Partial<InsertBankConnection>): Promise<BankConnection | null> {
+    const [updatedConnection] = await db
+      .update(bankConnections)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(
+        and(
+          eq(bankConnections.id, connectionId),
+          eq(bankConnections.userId, userId)
+        )
+      )
+      .returning();
+    return updatedConnection || null;
+  }
+
+  async deleteBankConnection(userId: string, connectionId: string): Promise<boolean> {
+    const result = await db
+      .delete(bankConnections)
+      .where(
+        and(
+          eq(bankConnections.id, connectionId),
+          eq(bankConnections.userId, userId)
+        )
+      );
+    return result.rowCount! > 0;
+  }
+
+  async getBankProviders(): Promise<BankProvider[]> {
+    return await db
+      .select()
+      .from(bankProviders)
+      .where(eq(bankProviders.isActive, true))
+      .orderBy(asc(bankProviders.displayName));
   }
 }
 

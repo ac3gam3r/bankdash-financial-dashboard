@@ -12,6 +12,8 @@ import {
   insertRecurringPaymentSchema,
   insertTripSchema,
   insertRewardRedemptionSchema,
+  insertBankConnectionSchema,
+  insertBankProviderSchema,
 } from "@shared/schema";
 import { z } from "zod";
 
@@ -789,6 +791,208 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error("Error fetching total rewards:", error);
       res.status(500).json({ message: "Failed to fetch total rewards" });
     }
+  });
+
+  // ==================== BANK CONNECTIONS ROUTES ====================
+
+  // Get user's bank connections
+  app.get("/api/bank-connections", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const connections = await storage.getUserBankConnections(userId);
+      res.json(connections);
+    } catch (error) {
+      console.error("Error fetching bank connections:", error);
+      res.status(500).json({ message: "Failed to fetch bank connections" });
+    }
+  });
+
+  // Get available bank providers
+  app.get("/api/bank-providers", isAuthenticated, async (req: any, res) => {
+    try {
+      const providers = await storage.getBankProviders();
+      res.json(providers);
+    } catch (error) {
+      console.error("Error fetching bank providers:", error);
+      res.status(500).json({ message: "Failed to fetch bank providers" });
+    }
+  });
+
+  // Connect to a bank
+  app.post("/api/bank-connections/connect", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      
+      // Validate request body with zod
+      const connectSchema = z.object({
+        bankId: z.string().min(1, "Bank ID is required"),
+        accountType: z.string().optional(),
+        connectionMethod: z.enum(['manual', 'plaid', 'yodlee', 'api']).default('manual'),
+      });
+      
+      const validatedData = connectSchema.parse(req.body);
+      const { bankId, accountType, connectionMethod } = validatedData;
+
+      // Get bank provider with proper validation
+      const providers = await storage.getBankProviders();
+      const provider = providers.find(p => p.id === bankId);
+      
+      if (!provider) {
+        return res.status(404).json({ message: "Bank provider not found" });
+      }
+
+      // Validate account type is supported by this provider
+      const selectedAccountType = accountType || provider.accountTypes[0];
+      if (!provider.accountTypes.includes(selectedAccountType)) {
+        return res.status(400).json({ 
+          message: "Account type not supported by this provider",
+          supportedTypes: provider.accountTypes
+        });
+      }
+
+      // Create validated bank connection data
+      const connectionData = insertBankConnectionSchema.parse({
+        userId,
+        bankName: provider.displayName || provider.name,
+        accountType: selectedAccountType,
+        accountNumber: Math.random().toString().slice(-4).padStart(4, '0'), // Mock last 4 digits
+        isConnected: true,
+        lastSync: new Date(),
+        status: 'active',
+        transactionCount: Math.floor(Math.random() * 100) + 10,
+        connectionMethod,
+        institutionId: bankId,
+        autoSync: provider.supportsAutoSync || false,
+        syncFrequency: 'daily',
+        errorCount: 0
+      });
+
+      const connection = await storage.createBankConnection(connectionData);
+
+      res.status(201).json({
+        success: true,
+        bankName: provider.displayName || provider.name,
+        accountsConnected: 1,
+        connection
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ 
+          message: "Invalid request data", 
+          errors: error.errors 
+        });
+      }
+      console.error("Error connecting bank:", error);
+      res.status(500).json({ message: "Failed to connect bank" });
+    }
+  });
+
+  // Sync transactions for a bank connection
+  app.post("/api/bank-connections/:connectionId/sync", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      
+      // Validate connection ID parameter
+      const paramsSchema = z.object({
+        connectionId: z.string().uuid("Invalid connection ID format")
+      });
+      
+      const { connectionId } = paramsSchema.parse(req.params);
+
+      // SECURITY FIX: Use user-scoped method to prevent IDOR
+      const connection = await storage.getUserBankConnection(userId, connectionId);
+      if (!connection) {
+        return res.status(404).json({ message: "Bank connection not found" });
+      }
+
+      // Check if connection is active and supports sync
+      if (!connection.isConnected || connection.status !== 'active') {
+        return res.status(400).json({ 
+          message: "Bank connection is not active",
+          status: connection.status 
+        });
+      }
+
+      // Simulate sync process with proper validation
+      const newTransactions = Math.floor(Math.random() * 5) + 1;
+      const syncTime = new Date();
+      
+      // Update using user-scoped method for additional security
+      const updateData = {
+        lastSync: syncTime,
+        transactionCount: connection.transactionCount + newTransactions,
+        errorCount: 0, // Reset error count on successful sync
+        lastError: null
+      };
+
+      const updatedConnection = await storage.updateUserBankConnection(userId, connectionId, updateData);
+
+      if (!updatedConnection) {
+        return res.status(500).json({ message: "Failed to update connection after sync" });
+      }
+
+      res.json({
+        success: true,
+        newTransactions,
+        lastSync: syncTime.toISOString(),
+        totalTransactions: updatedConnection.transactionCount
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ 
+          message: "Invalid connection ID", 
+          errors: error.errors 
+        });
+      }
+      console.error("Error syncing bank connection:", error);
+      res.status(500).json({ message: "Failed to sync bank connection" });
+    }
+  });
+
+  // Disconnect a bank connection
+  app.delete("/api/bank-connections/:connectionId", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      
+      // Validate connection ID parameter
+      const paramsSchema = z.object({
+        connectionId: z.string().uuid("Invalid connection ID format")
+      });
+      
+      const { connectionId } = paramsSchema.parse(req.params);
+
+      // SECURITY FIX: Verify connection belongs to user before deletion
+      const connection = await storage.getUserBankConnection(userId, connectionId);
+      if (!connection) {
+        return res.status(404).json({ message: "Bank connection not found" });
+      }
+
+      // Perform the deletion with proper user scoping
+      const success = await storage.deleteBankConnection(userId, connectionId);
+      
+      if (!success) {
+        return res.status(500).json({ message: "Failed to delete bank connection" });
+      }
+
+      res.status(200).json({ 
+        success: true,
+        message: "Bank connection disconnected successfully" 
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ 
+          message: "Invalid connection ID", 
+          errors: error.errors 
+        });
+      }
+      console.error("Error disconnecting bank:", error);
+      res.status(500).json({ message: "Failed to disconnect bank" });
+    }
+  });
+
+  // Health check for the API
+  app.head("/api", (req, res) => {
+    res.sendStatus(200);
   });
 
   const httpServer = createServer(app);

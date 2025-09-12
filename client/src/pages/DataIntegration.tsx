@@ -1,464 +1,378 @@
-import { useState, useRef } from "react";
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { 
-  Upload, 
-  Download, 
-  FileText, 
+  Building2, 
   CheckCircle, 
   XCircle, 
   AlertCircle,
-  Database,
-  Trash2,
-  Filter,
-  BarChart3
+  Link,
+  Unlink,
+  RefreshCw,
+  Shield,
+  Zap
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import type { BankConnection, BankProvider } from "@shared/schema";
 
-interface ImportResult {
+interface ConnectionResult {
   success: boolean;
-  imported: number;
-  duplicates: number;
-  errors: string[];
-  preview?: any[];
-}
-
-interface ExportOptions {
-  format: 'csv' | 'json';
-  dateRange: 'all' | '3m' | '6m' | '1y';
-  includeCategories: boolean;
-  includeRewards: boolean;
+  bankName: string;
+  accountsConnected: number;
+  connection?: BankConnection;
+  error?: string;
 }
 
 export default function DataIntegration() {
-  const [uploadProgress, setUploadProgress] = useState(0);
-  const [importResult, setImportResult] = useState<ImportResult | null>(null);
-  const [isUploading, setIsUploading] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [connectionResult, setConnectionResult] = useState<ConnectionResult | null>(null);
+  const [isConnecting, setIsConnecting] = useState(false);
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
-  // Get import history
-  const { data: importHistory = [], isLoading: historyLoading } = useQuery({
-    queryKey: ["/api/data/imports"],
+  // Get connected banks
+  const { data: connectedBanks = [], isLoading: banksLoading } = useQuery<BankConnection[]>({
+    queryKey: ["/api/bank-connections"],
   });
 
-  // CSV Import mutation
-  const importMutation = useMutation({
-    mutationFn: async (file: File) => {
-      setIsUploading(true);
-      setUploadProgress(0);
-      
-      const formData = new FormData();
-      formData.append('file', file);
-      
-      // Simulate progress updates
-      const progressInterval = setInterval(() => {
-        setUploadProgress(prev => Math.min(prev + 10, 90));
-      }, 200);
-
-      try {
-        const response = await apiRequest("/api/data/import", {
-          method: "POST",
-          body: formData,
-        });
-        
-        clearInterval(progressInterval);
-        setUploadProgress(100);
-        
-        return response;
-      } catch (error) {
-        clearInterval(progressInterval);
-        throw error;
-      } finally {
-        setIsUploading(false);
-      }
-    },
-    onSuccess: (result: ImportResult) => {
-      setImportResult(result);
-      queryClient.invalidateQueries({ queryKey: ["/api/transactions"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/data/imports"] });
-      
-      toast({
-        title: "Import Complete",
-        description: `Successfully imported ${result.imported} transactions. ${result.duplicates} duplicates skipped.`,
-      });
-    },
-    onError: (error: any) => {
-      toast({
-        title: "Import Failed",
-        description: error.message || "Failed to import CSV file",
-        variant: "destructive",
-      });
-    }
+  // Get available bank providers
+  const { data: bankProviders = [], isLoading: providersLoading } = useQuery<BankProvider[]>({
+    queryKey: ["/api/bank-providers"],
   });
 
-  // CSV Export mutation
-  const exportMutation = useMutation({
-    mutationFn: async (options: ExportOptions) => {
-      const response = await apiRequest("/api/data/export", {
+  // Bank connection mutation
+  const connectBankMutation = useMutation({
+    mutationFn: async (bankId: string) => {
+      setIsConnecting(true);
+      
+      const response = await apiRequest("/api/bank-connections/connect", {
         method: "POST",
-        body: JSON.stringify(options),
+        body: JSON.stringify({ bankId }),
         headers: {
           "Content-Type": "application/json",
         },
       });
       
-      // Create download link
-      const blob = new Blob([response], { 
-        type: options.format === 'csv' ? 'text/csv' : 'application/json' 
-      });
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `financial-data-${new Date().toISOString().split('T')[0]}.${options.format}`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      window.URL.revokeObjectURL(url);
-      
       return response;
     },
-    onSuccess: () => {
+    onSuccess: (result: ConnectionResult) => {
+      setConnectionResult(result);
+      queryClient.invalidateQueries({ queryKey: ["/api/bank-connections"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/transactions"] });
+      
       toast({
-        title: "Export Complete",
-        description: "Your financial data has been downloaded successfully.",
+        title: "Bank Connected",
+        description: `Successfully connected to ${result.bankName}. ${result.accountsConnected} accounts synced.`,
       });
     },
     onError: (error: any) => {
       toast({
-        title: "Export Failed",
-        description: error.message || "Failed to export data",
+        title: "Connection Failed",
+        description: error.message || "Failed to connect to bank",
+        variant: "destructive",
+      });
+    },
+    onSettled: () => {
+      setIsConnecting(false);
+    }
+  });
+
+  // Sync transactions mutation
+  const syncTransactionsMutation = useMutation({
+    mutationFn: async (connectionId: string) => {
+      const response = await apiRequest(`/api/bank-connections/${connectionId}/sync`, {
+        method: "POST",
+      });
+      
+      return response;
+    },
+    onSuccess: (result: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/bank-connections"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/transactions"] });
+      
+      toast({
+        title: "Sync Complete",
+        description: `${result.newTransactions} new transactions synced.`,
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Sync Failed",
+        description: error.message || "Failed to sync transactions",
         variant: "destructive",
       });
     }
   });
 
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      if (file.type !== 'text/csv' && !file.name.endsWith('.csv')) {
-        toast({
-          title: "Invalid File Type",
-          description: "Please select a CSV file",
-          variant: "destructive",
-        });
-        return;
-      }
+  // Disconnect bank mutation
+  const disconnectBankMutation = useMutation({
+    mutationFn: async (connectionId: string) => {
+      const response = await apiRequest(`/api/bank-connections/${connectionId}`, {
+        method: "DELETE",
+      });
       
-      importMutation.mutate(file);
+      return response;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/bank-connections"] });
+      
+      toast({
+        title: "Bank Disconnected",
+        description: "Bank connection has been removed successfully.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Disconnect Failed",
+        description: error.message || "Failed to disconnect bank",
+        variant: "destructive",
+      });
     }
+  });
+
+  const handleConnectBank = (bankId: string) => {
+    connectBankMutation.mutate(bankId);
   };
 
-  const handleExport = (options: ExportOptions) => {
-    exportMutation.mutate(options);
+  const handleSyncTransactions = (connectionId: string) => {
+    syncTransactionsMutation.mutate(connectionId);
   };
 
-  const resetImport = () => {
-    setImportResult(null);
-    setUploadProgress(0);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
+  const handleDisconnectBank = (connectionId: string) => {
+    disconnectBankMutation.mutate(connectionId);
   };
 
   return (
     <div className="container mx-auto p-6 space-y-6">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold">Data Integration</h1>
-          <p className="text-muted-foreground">Import, export, and manage your financial data</p>
+          <h1 className="text-3xl font-bold">Bank Connections</h1>
+          <p className="text-muted-foreground">Connect your bank accounts for automatic transaction sync</p>
         </div>
       </div>
 
-      <Tabs defaultValue="import" className="space-y-4">
-        <TabsList className="grid w-full grid-cols-3">
-          <TabsTrigger value="import">Import Data</TabsTrigger>
-          <TabsTrigger value="export">Export Data</TabsTrigger>
-          <TabsTrigger value="history">Import History</TabsTrigger>
+      <Tabs defaultValue="connect" className="space-y-4">
+        <TabsList className="grid w-full grid-cols-2">
+          <TabsTrigger value="connect">Connect Banks</TabsTrigger>
+          <TabsTrigger value="manage">Manage Connections</TabsTrigger>
         </TabsList>
 
-        {/* Import Tab */}
-        <TabsContent value="import" className="space-y-4">
+        {/* Connect Banks Tab */}
+        <TabsContent value="connect" className="space-y-4">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Import Instructions */}
+            {/* Security Notice */}
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <FileText className="h-5 w-5" />
-                  CSV Import Format
+                  <Shield className="h-5 w-5" />
+                  Secure Bank Connections
                 </CardTitle>
                 <CardDescription>
-                  Upload transaction data from your bank or financial institutions
+                  Your banking credentials are secured with bank-level encryption
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="text-sm space-y-2">
-                  <p className="font-medium">Required CSV columns:</p>
-                  <div className="bg-muted p-3 rounded-lg font-mono text-xs">
-                    date, description, amount, type
+                <div className="space-y-3 text-sm">
+                  <div className="flex items-start gap-3">
+                    <CheckCircle className="h-4 w-4 text-green-600 mt-0.5" />
+                    <div>
+                      <p className="font-medium">256-bit SSL encryption</p>
+                      <p className="text-muted-foreground">Same security used by your bank</p>
+                    </div>
                   </div>
-                  <p className="font-medium">Optional columns:</p>
-                  <div className="bg-muted p-3 rounded-lg font-mono text-xs">
-                    category, account, rewards_earned
+                  <div className="flex items-start gap-3">
+                    <CheckCircle className="h-4 w-4 text-green-600 mt-0.5" />
+                    <div>
+                      <p className="font-medium">Read-only access</p>
+                      <p className="text-muted-foreground">We can only view transaction data</p>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-3">
+                    <CheckCircle className="h-4 w-4 text-green-600 mt-0.5" />
+                    <div>
+                      <p className="font-medium">No stored credentials</p>
+                      <p className="text-muted-foreground">Banking passwords never saved</p>
+                    </div>
                   </div>
                 </div>
                 
                 <Separator />
                 
-                <div className="space-y-2">
-                  <p className="text-sm font-medium">Example data:</p>
-                  <div className="bg-muted p-3 rounded-lg text-xs space-y-1">
-                    <div>2024-01-15,Coffee Shop Purchase,-4.50,debit,Food & Dining</div>
-                    <div>2024-01-16,Salary Deposit,2500.00,credit,Income</div>
-                    <div>2024-01-17,Gas Station,-45.20,debit,Transportation</div>
+                <div className="p-3 bg-blue-50 rounded-lg">
+                  <div className="flex items-center gap-2 text-blue-700 mb-1">
+                    <Zap className="h-4 w-4" />
+                    <span className="font-medium">Automatic Sync</span>
                   </div>
+                  <p className="text-sm text-blue-600">
+                    Transactions sync automatically every 24 hours
+                  </p>
                 </div>
               </CardContent>
             </Card>
 
-            {/* Upload Area */}
+            {/* Available Banks */}
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <Upload className="h-5 w-5" />
-                  Upload CSV File
+                  <Link className="h-5 w-5" />
+                  Connect Your Bank
                 </CardTitle>
                 <CardDescription>
-                  Import transactions from your CSV file
+                  Select your bank to connect and sync transactions
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                {!isUploading && !importResult && (
-                  <div className="border-2 border-dashed border-muted-foreground/25 rounded-lg p-8 text-center">
-                    <Upload className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                    <p className="text-sm text-muted-foreground mb-4">
-                      Choose a CSV file to upload
-                    </p>
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept=".csv,text/csv"
-                      onChange={handleFileUpload}
-                      className="hidden"
-                      data-testid="input-csv-file"
-                    />
-                    <Button 
-                      onClick={() => fileInputRef.current?.click()}
-                      data-testid="button-select-file"
-                    >
-                      Select CSV File
-                    </Button>
+                {providersLoading ? (
+                  <div className="text-center py-8">
+                    <div className="text-muted-foreground">Loading available banks...</div>
                   </div>
-                )}
-
-                {isUploading && (
-                  <div className="space-y-4">
-                    <div className="text-center">
-                      <Upload className="h-12 w-12 mx-auto text-blue-600 mb-4 animate-pulse" />
-                      <p className="text-sm font-medium">Uploading and processing...</p>
-                    </div>
-                    <Progress value={uploadProgress} className="w-full" />
-                    <p className="text-xs text-center text-muted-foreground">
-                      {uploadProgress}% complete
-                    </p>
-                  </div>
-                )}
-
-                {importResult && (
-                  <div className="space-y-4">
-                    <Alert className={importResult.success ? "border-green-200" : "border-red-200"}>
-                      {importResult.success ? (
-                        <CheckCircle className="h-4 w-4 text-green-600" />
-                      ) : (
-                        <XCircle className="h-4 w-4 text-red-600" />
-                      )}
-                      <AlertTitle>
-                        {importResult.success ? "Import Successful" : "Import Issues"}
-                      </AlertTitle>
-                      <AlertDescription>
-                        {importResult.success 
-                          ? `${importResult.imported} transactions imported successfully`
-                          : `${importResult.errors.length} errors occurred during import`
-                        }
-                      </AlertDescription>
-                    </Alert>
-
-                    <div className="grid grid-cols-2 gap-4 text-sm">
-                      <div className="text-center p-3 bg-green-50 rounded-lg">
-                        <div className="font-semibold text-green-700">{importResult.imported}</div>
-                        <div className="text-green-600">Imported</div>
+                ) : (
+                  <div className="space-y-3">
+                    {bankProviders.length === 0 ? (
+                      <div className="text-center py-8">
+                        <Building2 className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+                        <div className="text-muted-foreground">Bank integration coming soon</div>
+                        <p className="text-sm text-muted-foreground mt-2">
+                          We're working on connecting with major banks
+                        </p>
                       </div>
-                      <div className="text-center p-3 bg-yellow-50 rounded-lg">
-                        <div className="font-semibold text-yellow-700">{importResult.duplicates}</div>
-                        <div className="text-yellow-600">Duplicates</div>
-                      </div>
-                    </div>
-
-                    {importResult.errors.length > 0 && (
-                      <div className="bg-red-50 p-3 rounded-lg">
-                        <p className="font-medium text-red-700 mb-2">Errors:</p>
-                        <ul className="text-sm text-red-600 space-y-1">
-                          {importResult.errors.slice(0, 5).map((error, index) => (
-                            <li key={index}>• {error}</li>
-                          ))}
-                          {importResult.errors.length > 5 && (
-                            <li>• ... and {importResult.errors.length - 5} more errors</li>
-                          )}
-                        </ul>
-                      </div>
+                    ) : (
+                      bankProviders.map((bank: any) => (
+                        <div key={bank.id} className="flex items-center justify-between p-4 border rounded-lg hover-elevate">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center">
+                              <Building2 className="h-5 w-5 text-blue-600" />
+                            </div>
+                            <div>
+                              <div className="font-medium">{bank.name}</div>
+                              <div className="text-sm text-muted-foreground">
+                                {bank.accountTypes.join(', ')}
+                              </div>
+                            </div>
+                          </div>
+                          <Button
+                            onClick={() => handleConnectBank(bank.id)}
+                            disabled={isConnecting}
+                            data-testid={`button-connect-${bank.id}`}
+                          >
+                            {isConnecting ? "Connecting..." : "Connect"}
+                          </Button>
+                        </div>
+                      ))
                     )}
-
-                    <div className="flex gap-2">
-                      <Button onClick={resetImport} variant="outline" data-testid="button-import-another">
-                        Import Another File
-                      </Button>
-                      <Button 
-                        onClick={() => window.location.href = '/transactions'}
-                        data-testid="button-view-transactions"
-                      >
-                        View Transactions
-                      </Button>
-                    </div>
                   </div>
+                )}
+
+                {connectionResult && (
+                  <Alert className={connectionResult.success ? "border-green-200" : "border-red-200"}>
+                    {connectionResult.success ? (
+                      <CheckCircle className="h-4 w-4 text-green-600" />
+                    ) : (
+                      <XCircle className="h-4 w-4 text-red-600" />
+                    )}
+                    <AlertTitle>
+                      {connectionResult.success ? "Connection Successful" : "Connection Failed"}
+                    </AlertTitle>
+                    <AlertDescription>
+                      {connectionResult.success 
+                        ? `${connectionResult.bankName} connected successfully. ${connectionResult.accountsConnected} accounts synced.`
+                        : connectionResult.error || "Failed to connect to bank"
+                      }
+                    </AlertDescription>
+                  </Alert>
                 )}
               </CardContent>
             </Card>
           </div>
         </TabsContent>
 
-        {/* Export Tab */}
-        <TabsContent value="export" className="space-y-4">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Download className="h-5 w-5" />
-                  Export Transactions
-                </CardTitle>
-                <CardDescription>
-                  Download your transaction data in CSV format
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <Button 
-                  onClick={() => handleExport({
-                    format: 'csv',
-                    dateRange: 'all',
-                    includeCategories: true,
-                    includeRewards: true
-                  })}
-                  disabled={exportMutation.isPending}
-                  className="w-full"
-                  data-testid="button-export-all-csv"
-                >
-                  {exportMutation.isPending ? "Exporting..." : "Export All Transactions (CSV)"}
-                </Button>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <BarChart3 className="h-5 w-5" />
-                  Export Analytics Data
-                </CardTitle>
-                <CardDescription>
-                  Download financial analytics and reports
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 gap-2">
-                  <Button 
-                    onClick={() => handleExport({
-                      format: 'csv',
-                      dateRange: '1y',
-                      includeCategories: true,
-                      includeRewards: true
-                    })}
-                    variant="outline"
-                    disabled={exportMutation.isPending}
-                    data-testid="button-export-year-csv"
-                  >
-                    Last Year (CSV)
-                  </Button>
-                  <Button 
-                    onClick={() => handleExport({
-                      format: 'json',
-                      dateRange: 'all',
-                      includeCategories: true,
-                      includeRewards: true
-                    })}
-                    variant="outline"
-                    disabled={exportMutation.isPending}
-                    data-testid="button-export-all-json"
-                  >
-                    All Data (JSON)
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        </TabsContent>
-
-        {/* History Tab */}
-        <TabsContent value="history" className="space-y-4">
+        {/* Manage Connections Tab */}
+        <TabsContent value="manage" className="space-y-4">
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Database className="h-5 w-5" />
-                Import History
+                <Building2 className="h-5 w-5" />
+                Connected Banks
               </CardTitle>
               <CardDescription>
-                View previous data imports and their results
+                Manage your bank connections and sync settings
               </CardDescription>
             </CardHeader>
             <CardContent>
-              {historyLoading ? (
+              {banksLoading ? (
                 <div className="text-center py-8">
-                  <div className="text-muted-foreground">Loading import history...</div>
+                  <div className="text-muted-foreground">Loading connected banks...</div>
                 </div>
-              ) : importHistory.length === 0 ? (
+              ) : connectedBanks.length === 0 ? (
                 <div className="text-center py-8">
-                  <Database className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                  <div className="text-muted-foreground">No import history yet</div>
+                  <Building2 className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+                  <div className="text-muted-foreground">No banks connected yet</div>
                   <p className="text-sm text-muted-foreground mt-2">
-                    Import your first CSV file to see history here
+                    Connect your first bank to see it here
                   </p>
                 </div>
               ) : (
                 <div className="space-y-4">
-                  {importHistory.map((record: any, index: number) => (
-                    <div key={index} className="flex items-center justify-between p-4 border rounded-lg">
-                      <div className="flex items-center gap-3">
-                        {record.success ? (
-                          <CheckCircle className="h-5 w-5 text-green-600" />
-                        ) : (
-                          <XCircle className="h-5 w-5 text-red-600" />
-                        )}
-                        <div>
-                          <div className="font-medium">{record.filename}</div>
-                          <div className="text-sm text-muted-foreground">
-                            {new Date(record.timestamp).toLocaleString()}
+                  {connectedBanks.map((connection: BankConnection) => (
+                    <div key={connection.id} className="p-4 border rounded-lg">
+                      <div className="flex items-start justify-between">
+                        <div className="flex items-start gap-3">
+                          <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center">
+                            <Building2 className="h-5 w-5 text-blue-600" />
+                          </div>
+                          <div>
+                            <div className="font-medium">{connection.bankName}</div>
+                            <div className="text-sm text-muted-foreground">
+                              {connection.accountType} • ****{connection.accountNumber.slice(-4)}
+                            </div>
+                            <div className="text-sm text-muted-foreground mt-1">
+                              Last sync: {new Date(connection.lastSync).toLocaleDateString()}
+                            </div>
                           </div>
                         </div>
-                      </div>
-                      <div className="flex items-center gap-4">
-                        <div className="text-sm">
-                          <Badge variant={record.success ? "default" : "destructive"}>
-                            {record.imported || 0} imported
+                        
+                        <div className="flex items-center gap-2">
+                          <Badge 
+                            variant={connection.status === 'active' ? 'default' : 'destructive'}
+                          >
+                            {connection.status}
                           </Badge>
                         </div>
-                        <Button variant="ghost" size="sm" data-testid={`button-delete-history-${index}`}>
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                      </div>
+                      
+                      <Separator className="my-4" />
+                      
+                      <div className="flex items-center justify-between">
+                        <div className="text-sm text-muted-foreground">
+                          {connection.transactionCount} transactions synced
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleSyncTransactions(connection.id)}
+                            disabled={syncTransactionsMutation.isPending}
+                            data-testid={`button-sync-${connection.id}`}
+                          >
+                            <RefreshCw className="h-4 w-4 mr-1" />
+                            {syncTransactionsMutation.isPending ? "Syncing..." : "Sync Now"}
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleDisconnectBank(connection.id)}
+                            disabled={disconnectBankMutation.isPending}
+                            data-testid={`button-disconnect-${connection.id}`}
+                          >
+                            <Unlink className="h-4 w-4 mr-1" />
+                            Disconnect
+                          </Button>
+                        </div>
                       </div>
                     </div>
                   ))}
