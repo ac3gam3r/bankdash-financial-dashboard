@@ -15,6 +15,7 @@ import {
   BarChart3,
   Plane,
   Newspaper,
+  Link2,
   LogOut
 } from "lucide-react";
 
@@ -78,6 +79,12 @@ const navigationItems = [
     label: "News",
     icon: Newspaper,
     testId: "nav-news"
+  },
+  {
+    path: "/data-integration",
+    label: "Bank Connections",
+    icon: Link2,
+    testId: "nav-data-integration"
   }
 ];
 

@@ -17,6 +17,7 @@ import TaxReporting from "@/pages/TaxReporting";
 import Analytics from "@/pages/Analytics";
 import TravelPage from "@/pages/Travel";
 import NewsPage from "@/pages/News";
+import DataIntegration from "@/pages/DataIntegration";
 import NotFound from "@/pages/not-found";
 
 function AuthenticatedApp() {
@@ -33,6 +34,7 @@ function AuthenticatedApp() {
         <Route path="/analytics" component={Analytics} />
         <Route path="/travel" component={TravelPage} />
         <Route path="/news" component={NewsPage} />
+        <Route path="/data-integration" component={DataIntegration} />
         <Route component={NotFound} />
       </Switch>
     </AppNavigation>

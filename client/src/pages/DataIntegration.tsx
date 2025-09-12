@@ -47,18 +47,12 @@ export default function DataIntegration() {
 
   // Bank connection mutation
   const connectBankMutation = useMutation({
-    mutationFn: async (bankId: string) => {
+    mutationFn: async (bankId: string): Promise<ConnectionResult> => {
       setIsConnecting(true);
       
-      const response = await apiRequest("/api/bank-connections/connect", {
-        method: "POST",
-        body: JSON.stringify({ bankId }),
-        headers: {
-          "Content-Type": "application/json",
-        },
-      });
+      const response = await apiRequest("/api/bank-connections/connect", "POST", { bankId });
       
-      return response;
+      return response as ConnectionResult;
     },
     onSuccess: (result: ConnectionResult) => {
       setConnectionResult(result);
@@ -85,9 +79,7 @@ export default function DataIntegration() {
   // Sync transactions mutation
   const syncTransactionsMutation = useMutation({
     mutationFn: async (connectionId: string) => {
-      const response = await apiRequest(`/api/bank-connections/${connectionId}/sync`, {
-        method: "POST",
-      });
+      const response = await apiRequest(`/api/bank-connections/${connectionId}/sync`, "POST");
       
       return response;
     },
@@ -112,9 +104,7 @@ export default function DataIntegration() {
   // Disconnect bank mutation
   const disconnectBankMutation = useMutation({
     mutationFn: async (connectionId: string) => {
-      const response = await apiRequest(`/api/bank-connections/${connectionId}`, {
-        method: "DELETE",
-      });
+      const response = await apiRequest(`/api/bank-connections/${connectionId}`, "DELETE");
       
       return response;
     },
@@ -331,7 +321,7 @@ export default function DataIntegration() {
                               {connection.accountType} • ****{connection.accountNumber.slice(-4)}
                             </div>
                             <div className="text-sm text-muted-foreground mt-1">
-                              Last sync: {new Date(connection.lastSync).toLocaleDateString()}
+                              Last sync: {connection.lastSync ? new Date(connection.lastSync).toLocaleDateString() : 'Never'}
                             </div>
                           </div>
                         </div>
