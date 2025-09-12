@@ -183,6 +183,7 @@ export const bankBonuses = pgTable("bank_bonuses", {
   taxYear: integer("tax_year"),
   form1099Received: boolean("form_1099_received").default(false),
   taxableAmount: decimal("taxable_amount", { precision: 10, scale: 2 }),
+  isTaxable: boolean("is_taxable").default(true),
   
   status: text("status").default('pending'), // pending, earned, received, expired
   notes: text("notes"),
@@ -219,6 +220,12 @@ export const creditCardBonuses = pgTable("credit_card_bonuses", {
   // Annual fee tracking
   annualFee: decimal("annual_fee", { precision: 8, scale: 2 }).default('0'),
   feeWaivedFirstYear: boolean("fee_waived_first_year").default(false),
+  
+  // Tax information
+  taxYear: integer("tax_year"),
+  form1099Received: boolean("form_1099_received").default(false),
+  taxableAmount: decimal("taxable_amount", { precision: 10, scale: 2 }),
+  isTaxable: boolean("is_taxable").default(true),
   
   status: text("status").default('pending'), // pending, earned, received, expired
   notes: text("notes"),
