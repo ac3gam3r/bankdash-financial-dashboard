@@ -32,7 +32,7 @@ export default function HomePage() {
   });
 
   const { data: transactions, isLoading: transactionsLoading, error: transactionsError } = useQuery<Transaction[]>({
-    queryKey: ["/api/transactions", { limit: 5 }],
+    queryKey: ["/api/transactions", "limit", 5],
     enabled: isAuthenticated,
     retry: false,
   });

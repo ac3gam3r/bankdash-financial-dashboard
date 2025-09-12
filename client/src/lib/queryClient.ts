@@ -29,6 +29,18 @@ export const getQueryFn: <T>(options: {
 }) => QueryFunction<T> =
   ({ on401: unauthorizedBehavior }) =>
   async ({ queryKey }) => {
+    // Dev guard: Detect object literals in queryKey to prevent [object Object] URLs
+    if (import.meta.env.DEV) {
+      queryKey.forEach((key, index) => {
+        if (typeof key === 'object' && key !== null) {
+          throw new Error(
+            `QueryKey contains object at index ${index}: ${JSON.stringify(key)}. ` +
+            `This will create malformed URLs like [object Object]. Use string segments instead.`
+          );
+        }
+      });
+    }
+
     const res = await fetch(queryKey.join("/") as string, {
       credentials: "include",
     });
