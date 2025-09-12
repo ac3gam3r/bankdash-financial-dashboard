@@ -189,7 +189,7 @@ export default function Analytics() {
         const rewardRate = parseFloat(account.rewardRate || '0');
         
         // Calculate monthly ROI based on current performance
-        const monthlyRewards = rewardsEarned / monthCount;
+        const monthlyRewards = rewardsEarned / Math.max(1, differenceInMonths(dateRange.end, dateRange.start) + 1);
         const monthlyFee = annualFee / 12;
         const monthlyROI = monthlyFee > 0 ? ((monthlyRewards - monthlyFee) / monthlyFee) * 100 : 
                           rewardsEarned > 0 ? 999 : 0; // 999% for fee-free cards with rewards
