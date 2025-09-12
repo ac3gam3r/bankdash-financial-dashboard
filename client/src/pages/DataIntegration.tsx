@@ -52,7 +52,7 @@ export default function DataIntegration() {
       
       const response = await apiRequest("/api/bank-connections/connect", "POST", { bankId });
       
-      return response as ConnectionResult;
+      return response as unknown as ConnectionResult;
     },
     onSuccess: (result: ConnectionResult) => {
       setConnectionResult(result);
