@@ -249,7 +249,7 @@ export default function Analytics() {
     const totalBonusValue = [
       ...bankBonuses.filter(b => b.status === 'received'),
       ...creditCardBonuses.filter(b => b.status === 'received')
-    ].reduce((sum, bonus) => sum + parseFloat(bonus.bonusAmount), 0);
+    ].reduce((sum, bonus) => sum + parseFloat(bonus.bonusAmount || '0'), 0);
 
     return {
       totalSpending,
@@ -622,7 +622,7 @@ export default function Analytics() {
                               {displayName}
                             </div>
                             <div className="text-sm font-medium text-green-600">
-                              +${bonus.bonusAmount}
+                              +${parseFloat(bonus.bonusAmount || '0').toLocaleString()}
                             </div>
                           </div>
                         );
