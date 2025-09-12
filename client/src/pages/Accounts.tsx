@@ -10,6 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { Account } from "@shared/schema";
 import { Plus, CreditCard, Wallet, TrendingUp, AlertCircle } from "lucide-react";
+import AddAccountDialog from "@/components/AddAccountDialog";
 
 export default function AccountsPage() {
   const { isAuthenticated } = useAuth();
@@ -122,10 +123,12 @@ export default function AccountsPage() {
             Manage your bank accounts and credit cards
           </p>
         </div>
-        <Button data-testid="button-add-account">
-          <Plus className="h-4 w-4 mr-2" />
-          Add Account
-        </Button>
+        <AddAccountDialog>
+          <Button data-testid="button-add-account">
+            <Plus className="h-4 w-4 mr-2" />
+            Add Account
+          </Button>
+        </AddAccountDialog>
       </div>
 
       {/* Summary Cards */}
@@ -326,10 +329,12 @@ export default function AccountsPage() {
             <p className="text-muted-foreground text-center mb-4 max-w-md">
               Get started by connecting your first bank account or credit card to begin tracking your finances.
             </p>
-            <Button data-testid="button-add-first-account">
-              <Plus className="h-4 w-4 mr-2" />
-              Add Your First Account
-            </Button>
+            <AddAccountDialog>
+              <Button data-testid="button-add-first-account">
+                <Plus className="h-4 w-4 mr-2" />
+                Add Your First Account
+              </Button>
+            </AddAccountDialog>
           </CardContent>
         </Card>
       )}
