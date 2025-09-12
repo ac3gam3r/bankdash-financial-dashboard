@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,8 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { type BankBonus, type CreditCardBonus } from "@shared/schema";
 import AddBonusForm from "@/components/AddBonusForm";
@@ -26,9 +28,10 @@ import {
   Eye,
   Edit,
   Trash2,
-  TrendingUp
+  TrendingUp,
+  RefreshCw
 } from "lucide-react";
-import { format, differenceInDays, parseISO } from "date-fns";
+import { format, differenceInDays, parseISO, isBefore } from "date-fns";
 
 type CombinedBonus = (BankBonus & { bonusCategory: 'bank' }) | (CreditCardBonus & { bonusCategory: 'creditCard' });
 
@@ -39,6 +42,7 @@ export default function BonusManagement() {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [selectedBonus, setSelectedBonus] = useState<CombinedBonus | null>(null);
+  const [updatingStatus, setUpdatingStatus] = useState<string | null>(null);
 
   // Fetch both bank and credit card bonuses
   const { data: bankBonuses = [], isLoading: bankLoading } = useQuery<BankBonus[]>({
@@ -47,6 +51,51 @@ export default function BonusManagement() {
 
   const { data: creditCardBonuses = [], isLoading: ccLoading } = useQuery<CreditCardBonus[]>({
     queryKey: ["/api/credit-card-bonuses"],
+  });
+
+  // Update mutations for status changes
+  const updateBankBonusMutation = useMutation({
+    mutationFn: async ({ bonusId, updates }: { bonusId: string; updates: Partial<BankBonus> }) => {
+      return apiRequest("PATCH", `/api/bank-bonuses/${bonusId}`, updates);
+    },
+    onSuccess: () => {
+      toast({
+        title: "Success",
+        description: "Bank bonus updated successfully",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/bank-bonuses"] });
+      setUpdatingStatus(null);
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to update bank bonus",
+        variant: "destructive",
+      });
+      setUpdatingStatus(null);
+    },
+  });
+
+  const updateCreditCardBonusMutation = useMutation({
+    mutationFn: async ({ bonusId, updates }: { bonusId: string; updates: Partial<CreditCardBonus> }) => {
+      return apiRequest("PATCH", `/api/credit-card-bonuses/${bonusId}`, updates);
+    },
+    onSuccess: () => {
+      toast({
+        title: "Success", 
+        description: "Credit card bonus updated successfully",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/credit-card-bonuses"] });
+      setUpdatingStatus(null);
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to update credit card bonus",
+        variant: "destructive",
+      });
+      setUpdatingStatus(null);
+    },
   });
 
   // Delete mutations
@@ -95,6 +144,42 @@ export default function BonusManagement() {
     ...bankBonuses.map(bonus => ({ ...bonus, bonusCategory: 'bank' as const })),
     ...creditCardBonuses.map(bonus => ({ ...bonus, bonusCategory: 'creditCard' as const }))
   ];
+
+  // Auto-expire overdue bonuses (runs once on load)
+  useEffect(() => {
+    if (!combinedBonuses.length) return;
+    
+    const expiredBonuses = combinedBonuses.filter(bonus => {
+      if (bonus.status !== 'pending') return false;
+      
+      const deadline = bonus.bonusCategory === 'bank' 
+        ? (bonus as BankBonus & { bonusCategory: 'bank' }).requirementsDeadline
+        : (bonus as CreditCardBonus & { bonusCategory: 'creditCard' }).spendDeadline;
+      
+      if (!deadline) return false;
+      
+      const deadlineDate = typeof deadline === 'string' ? parseISO(deadline) : deadline;
+      return isBefore(deadlineDate, new Date());
+    });
+    
+    // Auto-expire overdue bonuses
+    if (expiredBonuses.length > 0) {
+      console.log(`Auto-expiring ${expiredBonuses.length} overdue bonuses`);
+      
+      expiredBonuses.forEach(bonus => {
+        const updates = { 
+          status: 'expired' as const,
+          requirementsMet: false 
+        };
+        
+        if (bonus.bonusCategory === 'bank') {
+          updateBankBonusMutation.mutate({ bonusId: bonus.id, updates });
+        } else {
+          updateCreditCardBonusMutation.mutate({ bonusId: bonus.id, updates });
+        }
+      });
+    }
+  }, [combinedBonuses.length]); // Only trigger when count changes
 
   // Filter bonuses
   const filteredBonuses = combinedBonuses.filter((bonus) => {
@@ -167,6 +252,21 @@ export default function BonusManagement() {
     return { current, required, percentage: Math.min(percentage, 100) };
   };
 
+  const updateBonusStatus = (bonus: CombinedBonus, newStatus: string) => {
+    setUpdatingStatus(bonus.id);
+    const updates = { 
+      status: newStatus,
+      requirementsMet: newStatus === 'earned' || newStatus === 'received',
+      bonusReceivedDate: newStatus === 'received' ? new Date().toISOString() : undefined
+    };
+
+    if (bonus.bonusCategory === 'bank') {
+      updateBankBonusMutation.mutate({ bonusId: bonus.id, updates });
+    } else {
+      updateCreditCardBonusMutation.mutate({ bonusId: bonus.id, updates });
+    }
+  };
+
   const handleDeleteBonus = (bonus: CombinedBonus) => {
     if (window.confirm(`Are you sure you want to delete this ${bonus.bonusCategory === 'bank' ? 'bank' : 'credit card'} bonus?`)) {
       if (bonus.bonusCategory === 'bank') {
@@ -179,16 +279,105 @@ export default function BonusManagement() {
 
   const isLoading = bankLoading || ccLoading;
 
+  // Get urgent deadline alerts
+  const urgentAlerts = combinedBonuses.filter(bonus => {
+    const warning = getDeadlineWarning(bonus);
+    return warning && (warning.type === 'urgent' || warning.type === 'expired');
+  });
+
   if (isLoading) {
     return (
-      <div className="container mx-auto p-6">
-        <div className="text-center">Loading bonuses...</div>
+      <div className="container mx-auto p-6 space-y-6">
+        <div className="flex justify-between items-center">
+          <div>
+            <Skeleton className="h-8 w-48" />
+            <Skeleton className="h-4 w-64 mt-2" />
+          </div>
+          <Skeleton className="h-10 w-32" />
+        </div>
+        
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <Card key={i}>
+              <CardHeader className="pb-2">
+                <Skeleton className="h-4 w-20" />
+              </CardHeader>
+              <CardContent>
+                <Skeleton className="h-8 w-12" />
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+        
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex gap-4">
+              <Skeleton className="h-10 flex-1" />
+              <Skeleton className="h-10 w-32" />
+              <Skeleton className="h-10 w-32" />
+            </div>
+          </CardContent>
+        </Card>
+        
+        <div className="space-y-4">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <Card key={i}>
+              <CardHeader>
+                <div className="flex justify-between">
+                  <div className="flex items-center gap-3">
+                    <Skeleton className="h-6 w-6" />
+                    <div>
+                      <Skeleton className="h-6 w-40" />
+                      <Skeleton className="h-4 w-32 mt-2" />
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <Skeleton className="h-8 w-8" />
+                    <Skeleton className="h-8 w-8" />
+                    <Skeleton className="h-8 w-8" />
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <Skeleton className="h-4 w-full" />
+                <div className="grid grid-cols-4 gap-4 mt-4">
+                  {Array.from({ length: 4 }).map((_, j) => (
+                    <div key={j}>
+                      <Skeleton className="h-3 w-16" />
+                      <Skeleton className="h-4 w-20 mt-1" />
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
       </div>
     );
   }
 
   return (
     <div className="container mx-auto p-6 space-y-6">
+      {/* Urgent Deadline Alerts */}
+      {urgentAlerts.length > 0 && (
+        <Alert className="border-orange-200 bg-orange-50 dark:border-orange-800 dark:bg-orange-950">
+          <AlertTriangle className="h-4 w-4 text-orange-600" />
+          <AlertDescription className="text-orange-800 dark:text-orange-200">
+            <strong>Deadline Alerts:</strong> You have {urgentAlerts.length} bonus{urgentAlerts.length > 1 ? 'es' : ''} with urgent deadlines. 
+            {urgentAlerts.slice(0, 2).map((bonus, idx) => {
+              const warning = getDeadlineWarning(bonus);
+              return (
+                <span key={bonus.id} className="ml-2">
+                  {bonus.bonusCategory === 'bank' ? bonus.bankName : (bonus as CreditCardBonus & { bonusCategory: 'creditCard' }).cardName} 
+                  ({warning?.type === 'expired' ? `expired ${warning.days}d ago` : `${warning?.days}d left`}){idx < Math.min(urgentAlerts.length, 2) - 1 ? ',' : ''}
+                </span>
+              );
+            })}
+            {urgentAlerts.length > 2 && <span className="ml-2">and {urgentAlerts.length - 2} more...</span>}
+          </AlertDescription>
+        </Alert>
+      )}
+
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
@@ -382,6 +571,47 @@ export default function BonusManagement() {
                     </div>
                     
                     <div className="flex items-center gap-2">
+                      {/* Status Update Buttons */}
+                      {bonus.status === 'pending' && (
+                        <Button 
+                          variant="outline" 
+                          size="sm"
+                          onClick={() => updateBonusStatus(bonus, 'earned')}
+                          disabled={updatingStatus === bonus.id}
+                          data-testid={`button-mark-earned-${bonus.id}`}
+                          className="text-xs"
+                        >
+                          {updatingStatus === bonus.id ? (
+                            <RefreshCw className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <>
+                              <CheckCircle className="h-3 w-3 mr-1" />
+                              Mark Earned
+                            </>
+                          )}
+                        </Button>
+                      )}
+                      
+                      {bonus.status === 'earned' && (
+                        <Button 
+                          variant="outline" 
+                          size="sm"
+                          onClick={() => updateBonusStatus(bonus, 'received')}
+                          disabled={updatingStatus === bonus.id}
+                          data-testid={`button-mark-received-${bonus.id}`}
+                          className="text-xs bg-green-50 border-green-200 text-green-700"
+                        >
+                          {updatingStatus === bonus.id ? (
+                            <RefreshCw className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <>
+                              <Gift className="h-3 w-3 mr-1" />
+                              Mark Received
+                            </>
+                          )}
+                        </Button>
+                      )}
+
                       <Button 
                         variant="outline" 
                         size="icon"
@@ -389,13 +619,6 @@ export default function BonusManagement() {
                         data-testid={`button-view-${bonus.id}`}
                       >
                         <Eye className="h-4 w-4" />
-                      </Button>
-                      <Button 
-                        variant="outline" 
-                        size="icon"
-                        data-testid={`button-edit-${bonus.id}`}
-                      >
-                        <Edit className="h-4 w-4" />
                       </Button>
                       <Button 
                         variant="outline" 
