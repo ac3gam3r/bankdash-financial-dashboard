@@ -16,6 +16,10 @@ export const accounts = pgTable("accounts", {
   accountType: text("account_type").notNull(), // checking, savings, credit
   balance: decimal("balance", { precision: 12, scale: 2 }).notNull(),
   bankName: text("bank_name").notNull(),
+  creditLimit: decimal("credit_limit", { precision: 12, scale: 2 }),
+  rewardRate: decimal("reward_rate", { precision: 5, scale: 4 }), // e.g., 0.015 for 1.5%
+  rewardType: text("reward_type"), // cashback, points, miles
+  totalRewards: decimal("total_rewards", { precision: 10, scale: 2 }).default('0'),
 });
 
 export const transactions = pgTable("transactions", {
@@ -26,6 +30,7 @@ export const transactions = pgTable("transactions", {
   category: text("category").notNull(),
   date: timestamp("date").notNull(),
   type: text("type").notNull(), // debit, credit
+  rewardsEarned: decimal("rewards_earned", { precision: 8, scale: 2 }).default('0'),
 });
 
 export const categories = pgTable("categories", {
