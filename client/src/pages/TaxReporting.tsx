@@ -44,10 +44,19 @@ export default function TaxReporting() {
   // Filter received bonuses for selected year
   const receivedBonuses = useMemo(() => {
     return allBonuses.filter(bonus => {
-      if (bonus.status !== 'received' || !bonus.bonusReceivedDate) return false;
+      if (bonus.status !== 'received') return false;
       
-      const receivedDate = new Date(bonus.bonusReceivedDate);
-      const bonusYear = receivedDate.getFullYear();
+      // Prefer explicit taxYear field, fall back to bonusReceivedDate year
+      let bonusYear: number;
+      if (bonus.taxYear) {
+        bonusYear = bonus.taxYear;
+      } else if (bonus.bonusReceivedDate) {
+        const receivedDate = new Date(bonus.bonusReceivedDate);
+        bonusYear = receivedDate.getFullYear();
+      } else {
+        return false; // No year information available
+      }
+      
       return bonusYear.toString() === selectedYear;
     });
   }, [allBonuses, selectedYear]);
@@ -85,7 +94,10 @@ export default function TaxReporting() {
   const availableYears = useMemo(() => {
     const years = new Set<string>();
     allBonuses.forEach(bonus => {
-      if (bonus.bonusReceivedDate) {
+      // Prefer explicit taxYear field, fall back to bonusReceivedDate year
+      if (bonus.taxYear) {
+        years.add(bonus.taxYear.toString());
+      } else if (bonus.bonusReceivedDate) {
         const year = new Date(bonus.bonusReceivedDate).getFullYear().toString();
         years.add(year);
       }
@@ -106,6 +118,8 @@ export default function TaxReporting() {
         bonusAmount: bonus.bonusAmount,
         taxableAmount: bonus.taxableAmount || bonus.bonusAmount,
         isTaxable: bonus.isTaxable !== false,
+        taxYear: bonus.taxYear || (bonus.bonusReceivedDate ? new Date(bonus.bonusReceivedDate).getFullYear() : null),
+        taxCategory: bonus.taxCategory || 'bonus_income',
         form1099Received: bonus.form1099Received,
         receivedDate: bonus.bonusReceivedDate,
         notes: bonus.notes
@@ -130,6 +144,8 @@ export default function TaxReporting() {
       'Bonus Amount',
       'Taxable Amount', 
       'Is Taxable',
+      'Tax Year',
+      'Tax Category',
       'Form 1099 Received',
       'Received Date',
       'Notes'
@@ -141,6 +157,8 @@ export default function TaxReporting() {
       `$${bonus.bonusAmount}`,
       `$${bonus.taxableAmount || bonus.bonusAmount}`,
       bonus.isTaxable !== false ? 'Yes' : 'No',
+      (bonus.taxYear || (bonus.bonusReceivedDate ? new Date(bonus.bonusReceivedDate).getFullYear() : '')).toString(),
+      bonus.taxCategory || 'bonus_income',
       bonus.form1099Received ? 'Yes' : 'No',
       bonus.bonusReceivedDate || '',
       bonus.notes || ''

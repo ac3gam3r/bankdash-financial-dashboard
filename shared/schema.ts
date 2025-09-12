@@ -181,6 +181,7 @@ export const bankBonuses = pgTable("bank_bonuses", {
   
   // Tax information
   taxYear: integer("tax_year"),
+  taxCategory: varchar("tax_category", { length: 50 }).default("bonus_income"),
   form1099Received: boolean("form_1099_received").default(false),
   taxableAmount: decimal("taxable_amount", { precision: 10, scale: 2 }),
   isTaxable: boolean("is_taxable").default(true),
@@ -223,6 +224,7 @@ export const creditCardBonuses = pgTable("credit_card_bonuses", {
   
   // Tax information
   taxYear: integer("tax_year"),
+  taxCategory: varchar("tax_category", { length: 50 }).default("bonus_income"),
   form1099Received: boolean("form_1099_received").default(false),
   taxableAmount: decimal("taxable_amount", { precision: 10, scale: 2 }),
   isTaxable: boolean("is_taxable").default(true),

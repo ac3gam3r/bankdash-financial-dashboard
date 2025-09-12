@@ -651,7 +651,7 @@ export default function BonusManagement() {
                   )}
 
                   {/* Key Information */}
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
                     {bonus.bonusCategory === 'bank' ? (
                       <>
                         {bonus.signupDate && (
@@ -711,6 +711,32 @@ export default function BonusManagement() {
                         </p>
                       </div>
                     )}
+                    
+                    <div>
+                      <span className="text-muted-foreground">Tax Status:</span>
+                      <div className="flex flex-col gap-1 mt-1">
+                        {bonus.isTaxable !== false ? (
+                          <Badge variant="outline" className="text-xs bg-green-50 text-green-700 w-fit" data-testid={`tax-status-${bonus.id}`}>
+                            Taxable
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 w-fit" data-testid={`tax-status-${bonus.id}`}>
+                            Non-Taxable
+                          </Badge>
+                        )}
+                        {bonus.isTaxable !== false && bonus.status === 'received' && (
+                          bonus.form1099Received ? (
+                            <Badge variant="default" className="text-xs bg-blue-50 text-blue-700 w-fit" data-testid={`form1099-status-${bonus.id}`}>
+                              1099 Received
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-xs bg-yellow-50 text-yellow-700 w-fit" data-testid={`form1099-status-${bonus.id}`}>
+                              1099 Pending
+                            </Badge>
+                          )
+                        )}
+                      </div>
+                    </div>
                   </div>
 
                   {/* Requirements Description */}
