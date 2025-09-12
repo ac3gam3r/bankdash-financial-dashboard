@@ -12,6 +12,7 @@ import {
   RotateCcw,
   Gift,
   Calculator,
+  BarChart3,
   Plane,
   Newspaper,
   LogOut
@@ -59,6 +60,12 @@ const navigationItems = [
     label: "Tax Reporting",
     icon: Calculator,
     testId: "nav-tax-reporting"
+  },
+  {
+    path: "/analytics",
+    label: "Analytics",
+    icon: BarChart3,
+    testId: "nav-analytics"
   },
   {
     path: "/travel",

@@ -14,6 +14,7 @@ import CategoriesPage from "@/pages/Categories";
 import RecurringPage from "@/pages/Recurring";
 import BonusPage from "@/pages/Bonus";
 import TaxReporting from "@/pages/TaxReporting";
+import Analytics from "@/pages/Analytics";
 import TravelPage from "@/pages/Travel";
 import NewsPage from "@/pages/News";
 import NotFound from "@/pages/not-found";
@@ -29,6 +30,7 @@ function AuthenticatedApp() {
         <Route path="/recurring" component={RecurringPage} />
         <Route path="/bonus" component={BonusPage} />
         <Route path="/tax-reporting" component={TaxReporting} />
+        <Route path="/analytics" component={Analytics} />
         <Route path="/travel" component={TravelPage} />
         <Route path="/news" component={NewsPage} />
         <Route component={NotFound} />
