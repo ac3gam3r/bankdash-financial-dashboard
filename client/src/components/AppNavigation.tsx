@@ -8,6 +8,7 @@ import {
   LayoutDashboard,
   Receipt,
   CreditCard,
+  Tag,
   RotateCcw,
   Gift,
   Plane,
@@ -33,6 +34,12 @@ const navigationItems = [
     label: "Accounts",
     icon: CreditCard,
     testId: "nav-accounts"
+  },
+  {
+    path: "/categories",
+    label: "Categories",
+    icon: Tag,
+    testId: "nav-categories"
   },
   {
     path: "/recurring",

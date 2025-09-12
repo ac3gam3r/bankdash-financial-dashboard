@@ -59,8 +59,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/categories", isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
-      const categories = await storage.getUserCategories(userId);
-      res.json(categories);
+      
+      // Get both system default categories and user custom categories
+      const [systemCategories, userCategories] = await Promise.all([
+        storage.getUserCategories(), // No userId = system categories
+        storage.getUserCategories(userId) // With userId = user categories
+      ]);
+      
+      // Combine and return all categories (user categories can override system ones)
+      const allCategories = [...systemCategories, ...userCategories];
+      res.json(allCategories);
     } catch (error) {
       console.error("Error fetching categories:", error);
       res.status(500).json({ message: "Failed to fetch categories" });

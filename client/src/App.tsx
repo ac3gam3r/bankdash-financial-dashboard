@@ -10,6 +10,7 @@ import Landing from "@/pages/Landing";
 import HomePage from "@/pages/Home";
 import TransactionsPage from "@/pages/Transactions";
 import AccountsPage from "@/pages/Accounts";
+import CategoriesPage from "@/pages/Categories";
 import RecurringPage from "@/pages/Recurring";
 import BonusPage from "@/pages/Bonus";
 import TravelPage from "@/pages/Travel";
@@ -23,6 +24,7 @@ function AuthenticatedApp() {
         <Route path="/" component={HomePage} />
         <Route path="/transactions" component={TransactionsPage} />
         <Route path="/accounts" component={AccountsPage} />
+        <Route path="/categories" component={CategoriesPage} />
         <Route path="/recurring" component={RecurringPage} />
         <Route path="/bonus" component={BonusPage} />
         <Route path="/travel" component={TravelPage} />

@@ -9,9 +9,11 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { isUnauthorizedError } from "@/lib/authUtils";
-import { Transaction, Category } from "@shared/schema";
-import { Search, Filter, Download, Plus } from "lucide-react";
+import { Transaction, Category, Account } from "@shared/schema";
+import { Search, Filter, Download, Edit } from "lucide-react";
 import { formatDistance } from "date-fns";
+import AddTransactionDialog from "@/components/AddTransactionDialog";
+import EditTransactionDialog from "@/components/EditTransactionDialog";
 
 export default function TransactionsPage() {
   const { isAuthenticated } = useAuth();
@@ -19,6 +21,7 @@ export default function TransactionsPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [selectedAccount, setSelectedAccount] = useState<string>("all");
+  const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
 
   const { data: transactions, isLoading: transactionsLoading, error: transactionsError } = useQuery<Transaction[]>({
     queryKey: ["/api/transactions"],
@@ -114,10 +117,7 @@ export default function TransactionsPage() {
             <Download className="h-4 w-4 mr-2" />
             Export
           </Button>
-          <Button data-testid="button-add-transaction">
-            <Plus className="h-4 w-4 mr-2" />
-            Add Transaction
-          </Button>
+          <AddTransactionDialog />
         </div>
       </div>
 
@@ -303,13 +303,23 @@ export default function TransactionsPage() {
                       </div>
                     </div>
                   </div>
-                  <div className="text-right">
-                    <div className={`font-semibold ${parseFloat(transaction.amount) > 0 ? 'text-green-600' : 'text-destructive'}`}>
-                      {parseFloat(transaction.amount) > 0 ? '+' : ''}{formatCurrency(transaction.amount)}
+                  <div className="flex items-center gap-4">
+                    <div className="text-right">
+                      <div className={`font-semibold ${parseFloat(transaction.amount) > 0 ? 'text-green-600' : 'text-destructive'}`}>
+                        {parseFloat(transaction.amount) > 0 ? '+' : ''}{formatCurrency(transaction.amount)}
+                      </div>
+                      <div className="text-sm text-muted-foreground">
+                        {formatDistance(new Date(transaction.date), new Date(), { addSuffix: true })}
+                      </div>
                     </div>
-                    <div className="text-sm text-muted-foreground">
-                      {formatDistance(new Date(transaction.date), new Date(), { addSuffix: true })}
-                    </div>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => setEditingTransaction(transaction)}
+                      data-testid={`button-edit-transaction-${transaction.id}`}
+                    >
+                      <Edit className="h-4 w-4" />
+                    </Button>
                   </div>
                 </div>
               ))
@@ -317,6 +327,19 @@ export default function TransactionsPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Edit Transaction Dialog */}
+      {editingTransaction && (
+        <EditTransactionDialog
+          transaction={editingTransaction}
+          open={!!editingTransaction}
+          onOpenChange={(open) => {
+            if (!open) {
+              setEditingTransaction(null);
+            }
+          }}
+        />
+      )}
     </div>
   );
 }

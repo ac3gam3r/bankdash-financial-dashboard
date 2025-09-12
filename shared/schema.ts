@@ -330,6 +330,8 @@ export const insertTransactionSchema = createInsertSchema(transactions).omit({
   id: true,
   createdAt: true,
   updatedAt: true,
+}).extend({
+  date: z.coerce.date(), // Accept ISO strings and convert to Date objects
 });
 export const insertCategorySchema = createInsertSchema(categories).omit({
   id: true,
