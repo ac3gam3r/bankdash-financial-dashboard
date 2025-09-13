@@ -1,179 +1,59 @@
-import Dashboard from "@/components/Dashboard";
-import { Account, Transaction, Category } from "@shared/schema";
+import { useEffect, useState } from "react";
+import { api } from "@/lib/api";
+import { Card } from "@/components/Card";
 
-// TODO: remove mock functionality - replace with real API calls
-const mockAccounts: Account[] = [
-  {
-    id: '1',
-    userId: 'user1',
-    accountName: 'Main Checking',
-    accountType: 'checking',
-    balance: '2847.53',
-    bankName: 'Chase Bank',
-    creditLimit: null,
-    rewardRate: null,
-    rewardType: null,
-    totalRewards: '0'
-  },
-  {
-    id: '2',
-    userId: 'user1',
-    accountName: 'Emergency Savings', 
-    accountType: 'savings',
-    balance: '15240.00',
-    bankName: 'Bank of America',
-    creditLimit: null,
-    rewardRate: null,
-    rewardType: null,
-    totalRewards: '0'
-  },
-  {
-    id: '3',
-    userId: 'user1',
-    accountName: 'Rewards Credit',
-    accountType: 'credit',
-    balance: '-1234.56',
-    bankName: 'Capital One',
-    creditLimit: '5000.00',
-    rewardRate: '0.02', // 2% cashback
-    rewardType: 'cashback',
-    totalRewards: '247.83'
-  },
-  {
-    id: '4',
-    userId: 'user1',
-    accountName: 'Travel Rewards Card',
-    accountType: 'credit',
-    balance: '-567.89',
-    bankName: 'Chase Sapphire',
-    creditLimit: '8000.00',
-    rewardRate: '0.015', // 1.5% points
-    rewardType: 'points',
-    totalRewards: '156.42'
-  }
-];
+type Dash = {
+  stats: { netWorth: number; totalAssets: number; creditCardDebt: number; accountsCount: number };
+  accounts: { id:number; name:string; balance:number }[];
+  transactions: { id:number; date:string; description:string; amount:number }[];
+};
 
-// TODO: remove mock functionality - replace with real API calls
-const mockTransactions: Transaction[] = [
-  {
-    id: '1',
-    accountId: '1',
-    amount: '-45.67',
-    description: 'Whole Foods Market',
-    category: 'groceries',
-    date: new Date('2024-01-15'),
-    type: 'debit',
-    rewardsEarned: '0'
-  },
-  {
-    id: '2',
-    accountId: '1',
-    amount: '2500.00',
-    description: 'Payroll Deposit',
-    category: 'income',
-    date: new Date('2024-01-14'),
-    type: 'credit',
-    rewardsEarned: '0'
-  },
-  {
-    id: '3',
-    accountId: '2',
-    amount: '-89.99',
-    description: 'Electric Bill',
-    category: 'utilities',
-    date: new Date('2024-01-13'),
-    type: 'debit',
-    rewardsEarned: '0'
-  },
-  {
-    id: '4',
-    accountId: '3',
-    amount: '-12.99',
-    description: 'Netflix',
-    category: 'entertainment',
-    date: new Date('2024-01-12'),
-    type: 'debit',
-    rewardsEarned: '0.26'
-  },
-  {
-    id: '5',
-    accountId: '3',
-    amount: '-156.78',
-    description: 'Amazon Purchase',
-    category: 'shopping',
-    date: new Date('2024-01-11'),
-    type: 'debit',
-    rewardsEarned: '3.14'
-  },
-  {
-    id: '6',
-    accountId: '4',
-    amount: '-28.45',
-    description: 'Starbucks',
-    category: 'dining',
-    date: new Date('2024-01-10'),
-    type: 'debit',
-    rewardsEarned: '0.43'
-  },
-  {
-    id: '7',
-    accountId: '4',
-    amount: '-75.00',
-    description: 'Gas Station',
-    category: 'transportation',
-    date: new Date('2024-01-09'),
-    type: 'debit',
-    rewardsEarned: '1.13'
-  },
-  {
-    id: '8',
-    accountId: '3',
-    amount: '-234.56',
-    description: 'Target',
-    category: 'shopping',
-    date: new Date('2024-01-08'),
-    type: 'debit',
-    rewardsEarned: '4.69'
-  },
-  {
-    id: '9',
-    accountId: '4',
-    amount: '-89.25',
-    description: 'Restaurant Dinner',
-    category: 'dining',
-    date: new Date('2024-12-20'),
-    type: 'debit',
-    rewardsEarned: '1.34'
-  },
-  {
-    id: '10',
-    accountId: '3',
-    amount: '-145.99',
-    description: 'Online Shopping',
-    category: 'shopping',
-    date: new Date('2024-12-18'),
-    type: 'debit',
-    rewardsEarned: '2.92'
-  }
-];
+export default function Dashboard() {
+  const [data, setData] = useState<Dash | null>(null);
+  useEffect(() => { api.get("/api/dashboard").then(r=>setData(r.data)); }, []);
+  if (!data) return <div className="p-6 text-sm text-zinc-600">Loading…</div>;
+  const fmt = (n:number) => n.toLocaleString(undefined, {style:"currency",currency:"USD"});
 
-// TODO: remove mock functionality - replace with real API calls
-const mockCategories: Category[] = [
-  { id: '1', name: 'groceries', color: '#22c55e', icon: 'shopping-cart' },
-  { id: '2', name: 'income', color: '#3b82f6', icon: 'dollar-sign' },
-  { id: '3', name: 'utilities', color: '#8b5cf6', icon: 'zap' },
-  { id: '4', name: 'entertainment', color: '#ec4899', icon: 'gift' },
-  { id: '5', name: 'shopping', color: '#f59e0b', icon: 'shopping-cart' },
-  { id: '6', name: 'dining', color: '#ef4444', icon: 'utensils' },
-  { id: '7', name: 'transportation', color: '#06b6d4', icon: 'car' },
-];
-
-export default function DashboardPage() {
   return (
-    <Dashboard 
-      accounts={mockAccounts}
-      transactions={mockTransactions}
-      categories={mockCategories}
-    />
+    <div className="flex min-h-screen">
+      <SidebarPlaceholder />
+      <div className="flex-1 bg-zinc-50">
+        <header className="sticky top-0 z-10 border-b bg-white px-6 py-3">
+          <h1 className="text-lg font-semibold">Welcome Back!</h1>
+          <p className="text-xs text-zinc-500">Overview of your finances</p>
+        </header>
+        <main className="mx-auto max-w-7xl space-y-6 px-4 py-6">
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+            <Card><p className="text-xs uppercase text-zinc-500">Net Worth</p><p className="mt-1 text-2xl font-semibold">{fmt(data.stats.netWorth)}</p></Card>
+            <Card><p className="text-xs uppercase text-zinc-500">Total Assets</p><p className="mt-1 text-2xl font-semibold text-emerald-600">{fmt(data.stats.totalAssets)}</p></Card>
+            <Card><p className="text-xs uppercase text-zinc-500">Credit Card Debt</p><p className="mt-1 text-2xl font-semibold text-rose-600">{fmt(data.stats.creditCardDebt)}</p></Card>
+            <Card><p className="text-xs uppercase text-zinc-500">Accounts</p><p className="mt-1 text-2xl font-semibold">{data.stats.accountsCount}</p></Card>
+          </div>
+          <div className="grid gap-4 lg:grid-cols-3">
+            <Card title="Recent Transactions" className="lg:col-span-2">
+              <table className="w-full text-sm">
+                <thead className="text-left text-zinc-500"><tr><th className="py-2">Date</th><th>Description</th><th className="text-right">Amount</th></tr></thead>
+                <tbody>
+                  {data.transactions.map(t => (
+                    <tr key={t.id} className="border-t">
+                      <td className="py-2">{t.date}</td><td>{t.description}</td>
+                      <td className={`text-right ${t.amount<0?"text-rose-600":"text-emerald-600"}`}>{t.amount<0?"-":""}{fmt(Math.abs(t.amount))}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </Card>
+            <Card title="Quick Actions">
+              <div className="grid grid-cols-2 gap-3">
+                {["Transactions","Accounts","Bonuses","Export CSV"].map(a => (
+                  <a key={a} href={a==="Export CSV"?"/api/transactions/export.csv":`/${a.toLowerCase()}`} className="rounded-xl border px-3 py-2 text-sm hover:bg-zinc-50">{a}</a>
+                ))}
+              </div>
+            </Card>
+          </div>
+        </main>
+      </div>
+    </div>
   );
 }
+function SidebarPlaceholder(){ return null; }
