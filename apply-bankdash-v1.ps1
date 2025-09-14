@@ -1,5 +1,9 @@
-# Run from the repo root, e.g. F:\BankDash\bankdash-financial-dashboard
-# powershell -ExecutionPolicy Bypass -File .\apply-bankdash-v1.ps1
+# apply-bankdash-v1.ps1
+# Run from the repo root (e.g., F:\BankDash\bankdash-financial-dashboard)
+# Example:
+#   powershell -ExecutionPolicy Bypass -File .\apply-bankdash-v1.ps1
+# Optional: specify a branch to commit to:
+#   powershell -ExecutionPolicy Bypass -File .\apply-bankdash-v1.ps1 -Branch feature/bankdash-v1
 
 param(
   [string]$Branch = "feature/bankdash-v1"
@@ -8,11 +12,47 @@ param(
 function Write-File($Path, $Content) {
   $dir = Split-Path $Path
   if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
-  $Content | Out-File -FilePath $Path -Encoding UTF8 -Force
+  $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+  [System.IO.File]::WriteAllText($Path, $Content, $utf8NoBom)
   Write-Host "Wrote $Path"
 }
 
-# 1) Create/replace server files
+function Merge-PackageJsonScripts($pkgPath, $scriptsToSet) {
+  if (-not (Test-Path $pkgPath)) { throw "package.json not found at $pkgPath" }
+  $json = Get-Content $pkgPath -Raw | ConvertFrom-Json
+  if (-not $json.scripts) { $json | Add-Member -Name scripts -Value (@{}) -MemberType NoteProperty }
+  foreach ($k in $scriptsToSet.Keys) {
+    $json.scripts.$k = $scriptsToSet[$k]
+  }
+  ($json | ConvertTo-Json -Depth 10) | Out-File -FilePath $pkgPath -Encoding UTF8
+  Write-Host "Updated scripts in $pkgPath"
+}
+
+function Ensure-JsonDeps($pkgPath, $deps, $devDeps) {
+  $json = Get-Content $pkgPath -Raw | ConvertFrom-Json
+  if (-not $json.dependencies) { $json | Add-Member -Name dependencies -Value (@{}) -MemberType NoteProperty }
+  if (-not $json.devDependencies) { $json | Add-Member -Name devDependencies -Value (@{}) -MemberType NoteProperty }
+  foreach ($k in $deps.Keys) { $json.dependencies.$k = $deps[$k] }
+  foreach ($k in $devDeps.Keys) { $json.devDependencies.$k = $devDeps[$k] }
+  ($json | ConvertTo-Json -Depth 10) | Out-File -FilePath $pkgPath -Encoding UTF8
+  Write-Host "Ensured deps in $pkgPath"
+}
+
+# --- Root Drizzle config ------------------------------------------------------
+$rootDrizzle = @'
+import type { Config } from "drizzle-kit";
+
+export default {
+  schema: "./server/src/db/schema.ts",
+  out: "./server/drizzle",
+  dialect: "sqlite",
+  dbCredentials: { url: "./server/dev.db" }
+} satisfies Config;
+'@
+Write-File "drizzle.config.ts" $rootDrizzle
+
+# --- Server files -------------------------------------------------------------
+
 $serverSchema = @'
 import { sqliteTable, integer, text, real } from "drizzle-orm/sqlite-core";
 import { relations } from "drizzle-orm";
@@ -27,13 +67,13 @@ export const users = sqliteTable("users", {
 export const categories = sqliteTable("categories", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   name: text("name").notNull().unique(),
-  type: text("type").notNull().default("expense"),
+  type: text("type").notNull().default("expense"), // income | expense | transfer
 });
 
 export const accounts = sqliteTable("accounts", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   name: text("name").notNull(),
-  type: text("type").notNull(),
+  type: text("type").notNull(), // checking, savings, credit, investment
   last4: text("last4"),
   balance: real("balance").notNull().default(0),
   institution: text("institution"),
@@ -42,9 +82,9 @@ export const accounts = sqliteTable("accounts", {
 export const transactions = sqliteTable("transactions", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   accountId: integer("account_id").notNull().references(() => accounts.id),
-  date: text("date").notNull(),
+  date: text("date").notNull(), // ISO date
   description: text("description").notNull(),
-  amount: real("amount").notNull(),
+  amount: real("amount").notNull(), // negative=debit
   categoryId: integer("category_id").references(() => categories.id),
   notes: text("notes"),
   createdAt: text("created_at").notNull().default(() => new Date().toISOString()),
@@ -52,9 +92,9 @@ export const transactions = sqliteTable("transactions", {
 
 export const recurringRules = sqliteTable("recurring_rules", {
   id: integer("id").primaryKey({ autoIncrement: true }),
-  pattern: text("pattern").notNull(),
+  pattern: text("pattern").notNull(),  // e.g., /Kroger/i
   categoryId: integer("category_id").references(() => categories.id),
-  type: text("type").notNull().default("contains"),
+  type: text("type").notNull().default("contains"), // contains|regex
 });
 
 export const bonuses = sqliteTable("bonuses", {
@@ -62,7 +102,7 @@ export const bonuses = sqliteTable("bonuses", {
   bank: text("bank").notNull(),
   title: text("title").notNull(),
   amount: real("amount").notNull().default(0),
-  status: text("status").notNull().default("planning"),
+  status: text("status").notNull().default("planning"), // planning|active|earned
   openedAt: text("opened_at"),
   deadline: text("deadline"),
   notes: text("notes"),
@@ -72,6 +112,7 @@ export const accountsRelations = relations(accounts, ({ many }) => ({
   transactions: many(transactions),
 }));
 '@
+Write-File "server/src/db/schema.ts" $serverSchema
 
 $serverDbIndex = @'
 import Database from "better-sqlite3";
@@ -83,6 +124,7 @@ const sqlite = new Database(dbFile);
 export const db = drizzle(sqlite, { schema });
 export { schema };
 '@
+Write-File "server/src/db/index.ts" $serverDbIndex
 
 $serverAuth = @'
 import jwt from "jsonwebtoken";
@@ -109,6 +151,7 @@ export const authRequired = (req: Request, res: Response, next: NextFunction) =>
   }
 };
 '@
+Write-File "server/src/auth.ts" $serverAuth
 
 $serverRoutesAuth = @'
 import { Router } from "express";
@@ -141,6 +184,7 @@ r.post("/login", async (req, res) => {
 
 export default r;
 '@
+Write-File "server/src/routes/auth.ts" $serverRoutesAuth
 
 $serverRoutesAccounts = @'
 import { Router } from "express";
@@ -179,6 +223,7 @@ r.delete("/:id", async (req, res) => {
 
 export default r;
 '@
+Write-File "server/src/routes/accounts.ts" $serverRoutesAccounts
 
 $serverRoutesTransactions = @'
 import { Router } from "express";
@@ -189,8 +234,10 @@ import { authRequired } from "../auth";
 const r = Router();
 r.use(authRequired);
 
+// GET /api/transactions?search=&categoryId=&min=&max=&from=&to=&page=1&pageSize=20
 r.get("/", async (req, res) => {
   const { search = "", categoryId, min, max, from, to, page = "1", pageSize = "20" } = req.query as any;
+
   const where = and(
     search ? like(schema.transactions.description, `%${search}%`) : undefined,
     categoryId ? eq(schema.transactions.categoryId, Number(categoryId)) : undefined,
@@ -199,13 +246,16 @@ r.get("/", async (req, res) => {
     from ? gte(schema.transactions.date, String(from)) : undefined,
     to ? lte(schema.transactions.date, String(to)) : undefined,
   );
+
   const p = Math.max(1, Number(page));
   const ps = Math.max(1, Math.min(200, Number(pageSize)));
   const offset = (p - 1) * ps;
+
   const [rows, [{ count }]] = await Promise.all([
     db.select().from(schema.transactions).where(where).orderBy(desc(schema.transactions.date)).limit(ps).offset(offset),
     db.select({ count: sql<number>`count(*)` }).from(schema.transactions).where(where),
   ]);
+
   res.json({ rows, page: p, pageSize: ps, total: count });
 });
 
@@ -219,7 +269,10 @@ r.post("/", async (req, res) => {
 r.put("/:id", async (req, res) => {
   const id = Number(req.params.id);
   const { accountId, date, description, amount, categoryId, notes } = req.body ?? {};
-  const row = await db.update(schema.transactions).set({ accountId, date, description, amount, categoryId, notes }).where(eq(schema.transactions.id, id)).returning();
+  const row = await db.update(schema.transactions)
+    .set({ accountId, date, description, amount, categoryId, notes })
+    .where(eq(schema.transactions.id, id))
+    .returning();
   if (!row.length) return res.status(404).json({ error: "Not found" });
   res.json(row[0]);
 });
@@ -230,6 +283,7 @@ r.delete("/:id", async (req, res) => {
   res.json({ ok: true });
 });
 
+// CSV Export
 r.get("/export.csv", async (_req, res) => {
   const rows = await db.select().from(schema.transactions).orderBy(desc(schema.transactions.date));
   const header = "id,accountId,date,description,amount,categoryId,notes\n";
@@ -241,6 +295,7 @@ r.get("/export.csv", async (_req, res) => {
   res.send(csv);
 });
 
+// CSV Import (text/csv in JSON body as { csv: "..." })
 r.post("/import.csv", async (req, res) => {
   const text = String(req.body?.csv ?? "");
   if (!text) return res.status(400).json({ error: "csv missing in body" });
@@ -249,6 +304,7 @@ r.post("/import.csv", async (req, res) => {
   const idx = (name: string) => header.split(",").findIndex(h => h.trim() === name);
   const aI = idx("accountId"), dI = idx("date"), descI = idx("description"), amtI = idx("amount"), catI = idx("categoryId"), notesI = idx("notes");
   if (aI < 0 || dI < 0 || descI < 0 || amtI < 0) return res.status(400).json({ error: "required columns: accountId,date,description,amount" });
+
   const toInsert = data.map(line => {
     const cols = line.match(/("([^"]|"")*"|[^,]+)/g)?.map(s => s.replace(/^"|"$/g, "").replace(/""/g, '"')) ?? [];
     return {
@@ -267,6 +323,7 @@ r.post("/import.csv", async (req, res) => {
 
 export default r;
 '@
+Write-File "server/src/routes/transactions.ts" $serverRoutesTransactions
 
 $serverRoutesBonuses = @'
 import { Router } from "express";
@@ -305,6 +362,7 @@ r.delete("/:id", async (req, res) => {
 
 export default r;
 '@
+Write-File "server/src/routes/bonuses.ts" $serverRoutesBonuses
 
 $serverIndex = @'
 import "dotenv/config";
@@ -323,6 +381,7 @@ app.use(express.json({ limit: "2mb" }));
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
+// Public dashboard summary (adjust to require auth if desired)
 app.get("/api/dashboard", async (_req, res) => {
   const accounts = await db.select().from(schema.accounts);
   const transactions = await db.select().from(schema.transactions).orderBy(desc(schema.transactions.date)).limit(5);
@@ -340,6 +399,7 @@ app.use("/api/bonuses", bonusRoutes);
 const PORT = Number(process.env.PORT || 4000);
 app.listen(PORT, () => console.log(`API on http://localhost:${PORT}`));
 '@
+Write-File "server/src/index.ts" $serverIndex
 
 $serverSeed = @'
 import "dotenv/config";
@@ -390,23 +450,32 @@ async function main() {
 }
 main();
 '@
-
-Write-File "server/src/db/schema.ts" $serverSchema
-Write-File "server/src/db/index.ts" $serverDbIndex
-Write-File "server/src/auth.ts" $serverAuth
-Write-File "server/src/routes/auth.ts" $serverRoutesAuth
-Write-File "server/src/routes/accounts.ts" $serverRoutesAccounts
-Write-File "server/src/routes/transactions.ts" $serverRoutesTransactions
-Write-File "server/src/routes/bonuses.ts" $serverRoutesBonuses
-Write-File "server/src/index.ts" $serverIndex
 Write-File "server/src/seed.ts" $serverSeed
+
 Write-File "server/.env.example" @'
 DATABASE_URL=./dev.db
 PORT=4000
 JWT_SECRET=change_me
 '@
 
-# 2) Client files
+# Update server package.json scripts & deps safely
+$serverPkg = "server/package.json"
+$serverScripts = @{
+  "dev" = "nodemon --watch src --ext ts --exec ""ts-node ./src/index.ts"""
+  "seed" = "ts-node ./src/seed.ts"
+  "db:push" = "drizzle-kit push"
+  "db:studio" = "drizzle-kit studio"
+  "build" = "tsc"
+  "start" = "node dist/index.js"
+}
+Merge-PackageJsonScripts $serverPkg $serverScripts
+
+Ensure-JsonDeps $serverPkg `
+  @{ "express"="^5.1.0"; "cors"="^2.8.5"; "drizzle-orm"="^0.44.5"; "better-sqlite3"="^12.2.0"; "dotenv"="^17.2.2"; "bcryptjs"="^2.4.3"; "jsonwebtoken"="^9.0.2" } `
+  @{ "@types/node"="^20.11.20"; "@types/express"="^5.0.3"; "@types/cors"="^2.8.19"; "@types/better-sqlite3"="^7.6.13"; "ts-node"="^10.9.2"; "nodemon"="^3.1.10"; "typescript"="^5.4.5"; "drizzle-kit"="^0.24.2" }
+
+# --- Client files -------------------------------------------------------------
+
 $clientApi = @'
 import axios from "axios";
 const baseURL = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
@@ -417,15 +486,18 @@ api.interceptors.request.use((config) => {
   return config;
 });
 '@
+Write-File "client/src/lib/api.ts" $clientApi
 
 $clientSidebar = @'
 import { Link, useLocation } from "react-router-dom";
+
 const nav = [
   { to: "/", label: "Dashboard" },
   { to: "/transactions", label: "Transactions" },
   { to: "/accounts", label: "Accounts" },
   { to: "/bonuses", label: "Bonuses" },
 ];
+
 export default function Sidebar() {
   const loc = useLocation();
   return (
@@ -446,6 +518,7 @@ export default function Sidebar() {
   );
 }
 '@
+Write-File "client/src/components/Sidebar.tsx" $clientSidebar
 
 $clientCard = @'
 export function Card(props: React.PropsWithChildren<{title?: string; className?: string;}>) {
@@ -457,22 +530,28 @@ export function Card(props: React.PropsWithChildren<{title?: string; className?:
   );
 }
 '@
+Write-File "client/src/components/Card.tsx" $clientCard
 
 $clientLogin = @'
 import { useState } from "react";
 import { api } from "@/lib/api";
+
 export default function Login() {
   const [email, setEmail] = useState("demo@bankdash.app");
   const [password, setPassword] = useState("secret123");
   const [err, setErr] = useState<string | null>(null);
+
   const submit = async (path: "login" | "register") => {
     setErr(null);
     try {
       const { data } = await api.post(`/api/auth/${path}`, { email, password });
       localStorage.setItem("token", data.token);
       window.location.href = "/";
-    } catch (e: any) { setErr(e?.response?.data?.error ?? "Failed"); }
+    } catch (e: any) {
+      setErr(e?.response?.data?.error ?? "Failed");
+    }
   };
+
   return (
     <div className="min-h-screen grid place-items-center bg-zinc-50">
       <div className="w-full max-w-sm rounded-2xl border bg-white p-6 shadow-sm">
@@ -491,16 +570,19 @@ export default function Login() {
   );
 }
 '@
+Write-File "client/src/pages/Login.tsx" $clientLogin
 
 $clientDashboard = @'
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { Card } from "@/components/Card";
+
 export default function Dashboard() {
   const [data, setData] = useState<any>(null);
   useEffect(() => { api.get("/api/dashboard").then(r=>setData(r.data)); }, []);
   if (!data) return <div className="p-6 text-sm text-zinc-600">Loading…</div>;
   const fmt = (n:number) => n.toLocaleString(undefined, {style:"currency",currency:"USD"});
+
   return (
     <div className="flex min-h-screen">
       <div className="flex-1 bg-zinc-50">
@@ -545,6 +627,7 @@ export default function Dashboard() {
   );
 }
 '@
+Write-File "client/src/pages/Dashboard.tsx" $clientDashboard
 
 $clientTransactions = @'
 import { useEffect, useMemo, useState } from "react";
@@ -641,6 +724,7 @@ export default function TransactionsPage() {
   );
 }
 '@
+Write-File "client/src/pages/Transactions.tsx" $clientTransactions
 
 $clientAccounts = @'
 import { useEffect, useState } from "react";
@@ -709,6 +793,7 @@ export default function AccountsPage() {
   );
 }
 '@
+Write-File "client/src/pages/Accounts.tsx" $clientAccounts
 
 $clientBonuses = @'
 import { useEffect, useState } from "react";
@@ -778,6 +863,7 @@ export default function BonusesPage() {
   );
 }
 '@
+Write-File "client/src/pages/Bonuses.tsx" $clientBonuses
 
 $clientMain = @'
 import React from "react";
@@ -816,41 +902,58 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
   </React.StrictMode>
 );
 '@
+Write-File "client/src/main.tsx" $clientMain
 
-Write-File "client/src/lib/api.ts" $clientApi
-Write-File "client/src/components/Sidebar.tsx" $clientSidebar
-Write-File "client/src/components/Card.tsx" $clientCard
-Write-File "client/src/pages/Login.tsx" $clientLogin
-Write-File "client/src/pages/Dashboard.tsx" $clientDashboard
-Write-File "client/src/pages/Transactions.tsx" $clientTransactions
-Write-File "client/src/pages/Accounts.tsx" $clientAccounts
-Write-File "client/src/pages/Bonuses.tsx" $clientBonuses
 Write-File "client/.env.example" @'
 VITE_API_URL=http://localhost:4000
 '@
 
-# 3) Ensure basic server package.json scripts (non-destructive append guidance)
-# (You already have most; just ensure dev uses nodemon)
-Write-Host "`n> Ensure server/package.json scripts have:"
-Write-Host '  "dev": "nodemon --watch src --ext ts --exec \"ts-node ./src/index.ts\""'
+# --- Git: commit to the specified branch -------------------------------------
+try {
+  git rev-parse --is-inside-work-tree *> $null
+} catch {
+  Write-Host "Not a git repository. Skipping git steps."
+  exit 0
+}
 
-# 4) Git: new branch, commit
-git checkout -b $Branch
-git add server client
-git commit -m "BankDash v1: transactions (filters, CSV import/export), accounts CRUD, bonuses tracker, auth (JWT)"
+# checkout target branch (do not create new, assume it exists per user request)
+git checkout $Branch
+git add server client drizzle.config.ts
+git commit -m "BankDash v1 update: Transactions (filters/CSV), Accounts CRUD, Bonuses, JWT auth, wiring"
+Write-Host "`n✅ Files written & committed on '$Branch'."
 
-Write-Host "`n✅ Files written & committed on $Branch."
-Write-Host "Next steps:"
-Write-Host "1) Install deps:"
-Write-Host "   cd server"
-Write-Host "   npm i express cors drizzle-orm better-sqlite3 dotenv bcryptjs jsonwebtoken"
-Write-Host "   npm i -D @types/node @types/express @types/cors @types/better-sqlite3 ts-node nodemon typescript drizzle-kit"
-Write-Host "   cd ..\\client"
-Write-Host "   npm i axios"
-Write-Host "2) DB & run:"
-Write-Host "   cd ..\\server"
-Write-Host "   npm run db:push && npm run seed && npm run dev"
-Write-Host "   # new terminal -> client: npm run dev"
-Write-Host "3) Push branch & open PR:"
-Write-Host "   git push -u origin $Branch"
-Write-Host "   # then open a PR on GitHub comparing $Branch -> main"
+Write-Host @"
+Next steps:
+
+1) Install dependencies
+
+   cd server
+   npm i
+   npm i express cors drizzle-orm better-sqlite3 dotenv bcryptjs jsonwebtoken
+   npm i -D @types/node @types/express @types/cors @types/better-sqlite3 ts-node nodemon typescript drizzle-kit
+
+   cd ..\client
+   npm i
+   npm i axios
+
+2) Database & run
+
+   # from repo root or server/
+   npx drizzle-kit push
+   cd server
+   npm run seed
+   npm run dev     # API http://localhost:4000
+
+   # new terminal
+   cd ..\client
+   npm run dev     # http://localhost:5173
+
+3) Login
+
+   Email: demo@bankdash.app
+   Pass : secret123
+
+4) Push your branch & open PR (if needed)
+
+   git push -u origin $Branch
+"@

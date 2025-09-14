@@ -2,7 +2,7 @@ import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import { Request, Response, NextFunction } from "express";
 
-const JWT_SECRET = process.env.JWT_SECRET || "change_me";
+const JWT_SECRET: string = process.env.JWT_SECRET || "change_me";
 
 export const hashPassword = (plain: string) => bcrypt.hash(plain, 10);
 export const verifyPassword = (plain: string, hash: string) => bcrypt.compare(plain, hash);

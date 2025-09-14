@@ -1,11 +1,16 @@
+// server/src/db/schema.ts
 import { sqliteTable, integer, text, real } from "drizzle-orm/sqlite-core";
 import { relations } from "drizzle-orm";
+import { sql } from "drizzle-orm"; // <-- add this
+
+// Helper: ISO-8601-ish timestamp via SQLite (UTC)
+const NOW_ISO = sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`;
 
 export const users = sqliteTable("users", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   email: text("email").notNull().unique(),
   passwordHash: text("password_hash").notNull(),
-  createdAt: text("created_at").notNull().default(() => new Date().toISOString()),
+  createdAt: text("created_at").notNull().default(NOW_ISO), // <-- changed
 });
 
 export const categories = sqliteTable("categories", {
@@ -26,12 +31,12 @@ export const accounts = sqliteTable("accounts", {
 export const transactions = sqliteTable("transactions", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   accountId: integer("account_id").notNull().references(() => accounts.id),
-  date: text("date").notNull(), // ISO date
+  date: text("date").notNull(), // ISO date string
   description: text("description").notNull(),
   amount: real("amount").notNull(), // negative=debit
   categoryId: integer("category_id").references(() => categories.id),
   notes: text("notes"),
-  createdAt: text("created_at").notNull().default(() => new Date().toISOString()),
+  createdAt: text("created_at").notNull().default(NOW_ISO), // <-- changed
 });
 
 export const recurringRules = sqliteTable("recurring_rules", {
@@ -52,6 +57,7 @@ export const bonuses = sqliteTable("bonuses", {
   notes: text("notes"),
 });
 
+// relations (optional)
 export const accountsRelations = relations(accounts, ({ many }) => ({
   transactions: many(transactions),
 }));
