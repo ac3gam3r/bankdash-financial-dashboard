@@ -52,3 +52,30 @@ export function comparePassword(plain: string, hashed: string): Promise<boolean>
 export function comparePasswordSync(plain: string, hashed: string): boolean {
   return bcrypt.compareSync(plain, hashed);
 }
+// ✅ keep route API stable by exporting an alias:
+export const verifyPassword = comparePassword;           // async version
+export const verifyPasswordSync = comparePasswordSync;   // (optional) sync alias
+
+import type { Request, Response, NextFunction } from "express";
+
+// … existing exports (signToken, verifyToken, hashPassword, etc.)
+
+export interface AuthRequest extends Request {
+  user?: any;
+}
+
+export function authRequired(req: AuthRequest, res: Response, next: NextFunction) {
+  const authHeader = req.headers["authorization"];
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({ error: "Missing or invalid Authorization header" });
+  }
+
+  const token = authHeader.split(" ")[1];
+  try {
+    const decoded = verifyToken(token);
+    req.user = decoded;
+    next();
+  } catch (err) {
+    return res.status(401).json({ error: "Invalid or expired token" });
+  }
+}
