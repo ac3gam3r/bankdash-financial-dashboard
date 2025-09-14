@@ -1,12 +1,10 @@
-import { Link, useLocation } from "react-router-dom";
-
+﻿import { Link, useLocation } from "react-router-dom";
 const nav = [
   { to: "/", label: "Dashboard" },
   { to: "/transactions", label: "Transactions" },
   { to: "/accounts", label: "Accounts" },
   { to: "/bonuses", label: "Bonuses" },
 ];
-
 export default function Sidebar() {
   const loc = useLocation();
   return (

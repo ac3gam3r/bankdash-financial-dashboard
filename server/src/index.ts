@@ -1,8 +1,8 @@
-import "dotenv/config";
+﻿import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import { db, schema } from "./db";
-import { desc, sql } from "drizzle-orm";
+import { desc } from "drizzle-orm";
 import authRoutes from "./routes/auth";
 import accountsRoutes from "./routes/accounts";
 import txRoutes from "./routes/transactions";
@@ -14,7 +14,6 @@ app.use(express.json({ limit: "2mb" }));
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
-// Simple dashboard summary (public demo; put behind auth if you want)
 app.get("/api/dashboard", async (_req, res) => {
   const accounts = await db.select().from(schema.accounts);
   const transactions = await db.select().from(schema.transactions).orderBy(desc(schema.transactions.date)).limit(5);
@@ -24,7 +23,6 @@ app.get("/api/dashboard", async (_req, res) => {
   res.json({ stats: { netWorth, totalAssets, creditCardDebt: ccDebt, accountsCount: accounts.length }, accounts: accounts.slice(0, 3), transactions });
 });
 
-// Feature routes
 app.use("/api/auth", authRoutes);
 app.use("/api/accounts", accountsRoutes);
 app.use("/api/transactions", txRoutes);

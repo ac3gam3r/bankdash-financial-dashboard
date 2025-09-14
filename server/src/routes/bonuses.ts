@@ -1,4 +1,4 @@
-import { Router } from "express";
+﻿import { Router } from "express";
 import { db, schema } from "../db";
 import { eq, desc } from "drizzle-orm";
 import { authRequired } from "../auth";

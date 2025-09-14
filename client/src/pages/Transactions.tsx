@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/api";
 import { Card } from "@/components/Card";
 
@@ -42,7 +42,7 @@ export default function TransactionsPage() {
         <main className="mx-auto max-w-7xl space-y-4 px-4 py-6">
           <Card title="Filters">
             <div className="grid gap-3 md:grid-cols-6">
-              <input className="rounded-lg border px-3 py-2 text-sm md:col-span-2" placeholder="Search description…" value={search} onChange={e=>{setSearch(e.target.value); setPage(1);}} />
+              <input className="rounded-lg border px-3 py-2 text-sm md:col-span-2" placeholder="Search descriptionâ€¦" value={search} onChange={e=>{setSearch(e.target.value); setPage(1);}} />
               <input className="rounded-lg border px-3 py-2 text-sm" placeholder="Category ID" value={categoryId} onChange={e=>{setCategoryId(e.target.value); setPage(1);}} />
               <input className="rounded-lg border px-3 py-2 text-sm" placeholder="Min $" value={min} onChange={e=>{setMin(e.target.value); setPage(1);}} />
               <input className="rounded-lg border px-3 py-2 text-sm" placeholder="Max $" value={max} onChange={e=>{setMax(e.target.value); setPage(1);}} />

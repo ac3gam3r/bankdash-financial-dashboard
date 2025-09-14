@@ -1,6 +1,5 @@
-import "dotenv/config";
+﻿import "dotenv/config";
 import { db, schema } from "./db";
-import { eq } from "drizzle-orm";
 import { hashPassword } from "./auth";
 
 async function main() {
@@ -10,11 +9,9 @@ async function main() {
   await db.delete(schema.categories).run();
   await db.delete(schema.users).run();
 
-  // user
   const passwordHash = await hashPassword("secret123");
   const [user] = await db.insert(schema.users).values({ email: "demo@bankdash.app", passwordHash }).returning();
 
-  // categories
   const cats = await db.insert(schema.categories).values([
     { name: "Groceries", type: "expense" },
     { name: "Dining", type: "expense" },
