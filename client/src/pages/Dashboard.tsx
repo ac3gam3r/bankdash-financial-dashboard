@@ -1,11 +1,13 @@
-﻿import { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { Card } from "@/components/Card";
+
 export default function Dashboard() {
   const [data, setData] = useState<any>(null);
   useEffect(() => { api.get("/api/dashboard").then(r=>setData(r.data)); }, []);
   if (!data) return <div className="p-6 text-sm text-zinc-600">Loadingâ€¦</div>;
   const fmt = (n:number) => n.toLocaleString(undefined, {style:"currency",currency:"USD"});
+
   return (
     <div className="flex min-h-screen">
       <div className="flex-1 bg-zinc-50">

@@ -1,4 +1,4 @@
-﻿import "dotenv/config";
+import "dotenv/config";
 import { db, schema } from "./db";
 import { hashPassword } from "./auth";
 

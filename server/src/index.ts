@@ -1,4 +1,4 @@
-﻿import "dotenv/config";
+import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import { db, schema } from "./db";
@@ -14,6 +14,7 @@ app.use(express.json({ limit: "2mb" }));
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
+// Public dashboard summary (adjust to require auth if desired)
 app.get("/api/dashboard", async (_req, res) => {
   const accounts = await db.select().from(schema.accounts);
   const transactions = await db.select().from(schema.transactions).orderBy(desc(schema.transactions.date)).limit(5);
