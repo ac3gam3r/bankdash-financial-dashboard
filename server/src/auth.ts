@@ -1,9 +1,8 @@
-// /server/src/auth.ts
-import jwt, { type Secret, type SignOptions } from "jsonwebtoken";
+﻿import jwt, { type Secret, type SignOptions } from "jsonwebtoken";
 import type { StringValue } from "ms";
 import bcrypt from "bcryptjs";
+import type { Request, Response, NextFunction } from "express";
 
-// ===== JWT bits =====
 const JWT_SECRET: Secret =
   process.env.JWT_SECRET ??
   (() => {
@@ -27,55 +26,41 @@ export function verifyToken<T = unknown>(token: string): T {
   return jwt.verify(token, JWT_SECRET) as T;
 }
 
-// ===== Password helpers =====
-// rounds: bcryptjs cost factor; keep modest for seeding/dev
+// bcrypt rounds
 const BCRYPT_ROUNDS = Number(process.env.BCRYPT_ROUNDS ?? 10);
 
-/** Async hash (preferred) */
 export async function hashPassword(plain: string): Promise<string> {
   const salt = await bcrypt.genSalt(BCRYPT_ROUNDS);
   return bcrypt.hash(plain, salt);
 }
-
-/** Sync hash (handy if your seeder isn't async) */
 export function hashPasswordSync(plain: string): string {
   const salt = bcrypt.genSaltSync(BCRYPT_ROUNDS);
   return bcrypt.hashSync(plain, salt);
 }
-
-/** Async compare */
 export function comparePassword(plain: string, hashed: string): Promise<boolean> {
   return bcrypt.compare(plain, hashed);
 }
-
-/** Sync compare */
 export function comparePasswordSync(plain: string, hashed: string): boolean {
   return bcrypt.compareSync(plain, hashed);
 }
-// ✅ keep route API stable by exporting an alias:
-export const verifyPassword = comparePassword;           // async version
-export const verifyPasswordSync = comparePasswordSync;   // (optional) sync alias
 
-import type { Request, Response, NextFunction } from "express";
+// Aliases to match route imports
+export const verifyPassword = comparePassword;
+export const verifyPasswordSync = comparePasswordSync;
 
-// … existing exports (signToken, verifyToken, hashPassword, etc.)
-
-export interface AuthRequest extends Request {
-  user?: any;
-}
-
+// Express auth middleware
+export interface AuthRequest extends Request { user?: any; }
 export function authRequired(req: AuthRequest, res: Response, next: NextFunction) {
   const authHeader = req.headers["authorization"];
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
     return res.status(401).json({ error: "Missing or invalid Authorization header" });
   }
-
   const token = authHeader.split(" ")[1];
   try {
     const decoded = verifyToken(token);
     req.user = decoded;
     next();
-  } catch (err) {
+  } catch {
     return res.status(401).json({ error: "Invalid or expired token" });
   }
 }

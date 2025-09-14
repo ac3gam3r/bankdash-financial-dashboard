@@ -1,959 +1,306 @@
 # apply-bankdash-v1.ps1
-# Run from the repo root (e.g., F:\BankDash\bankdash-financial-dashboard)
-# Example:
+# Usage:
 #   powershell -ExecutionPolicy Bypass -File .\apply-bankdash-v1.ps1
-# Optional: specify a branch to commit to:
-#   powershell -ExecutionPolicy Bypass -File .\apply-bankdash-v1.ps1 -Branch feature/bankdash-v1
 
-param(
-  [string]$Branch = "feature/bankdash-v1"
-)
+$ErrorActionPreference = "Stop"
+Write-Host "==> BankDash cleanup/apply script starting..." -ForegroundColor Cyan
 
-function Write-File($Path, $Content) {
-  $dir = Split-Path $Path
-  if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
-  $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-  [System.IO.File]::WriteAllText($Path, $Content, $utf8NoBom)
-  Write-Host "Wrote $Path"
-}
+if (-not (Test-Path ".git")) { throw "Run this from the git repo root." }
 
-function Merge-PackageJsonScripts($pkgPath, $scriptsToSet) {
-  if (-not (Test-Path $pkgPath)) { throw "package.json not found at $pkgPath" }
-  $json = Get-Content $pkgPath -Raw | ConvertFrom-Json
-  if (-not $json.scripts) { $json | Add-Member -Name scripts -Value (@{}) -MemberType NoteProperty }
-  foreach ($k in $scriptsToSet.Keys) {
-    $json.scripts.$k = $scriptsToSet[$k]
+# --- Helpers: JSON <-> Hashtable (PS5-safe) ---
+function ConvertTo-Hashtable {
+  param([Parameter(Mandatory=$true)] $InputObject)
+  if ($null -eq $InputObject) { return $null }
+
+  if ($InputObject -is [System.Collections.IDictionary]) {
+    $ht = @{}
+    foreach ($k in $InputObject.Keys) { $ht[$k] = ConvertTo-Hashtable $InputObject[$k] }
+    return $ht
   }
-  ($json | ConvertTo-Json -Depth 10) | Out-File -FilePath $pkgPath -Encoding UTF8
-  Write-Host "Updated scripts in $pkgPath"
+
+  if ($InputObject -is [System.Collections.IEnumerable] -and -not ($InputObject -is [string])) {
+    $arr = @()
+    foreach ($item in $InputObject) { $arr += ,(ConvertTo-Hashtable $item) }
+    return $arr
+  }
+
+  if ($InputObject -is [psobject]) {
+    $ht = @{}
+    foreach ($p in $InputObject.PSObject.Properties) { $ht[$p.Name] = ConvertTo-Hashtable $p.Value }
+    return $ht
+  }
+
+  return $InputObject
 }
 
-function Ensure-JsonDeps($pkgPath, $deps, $devDeps) {
-  $json = Get-Content $pkgPath -Raw | ConvertFrom-Json
-  if (-not $json.dependencies) { $json | Add-Member -Name dependencies -Value (@{}) -MemberType NoteProperty }
-  if (-not $json.devDependencies) { $json | Add-Member -Name devDependencies -Value (@{}) -MemberType NoteProperty }
-  foreach ($k in $deps.Keys) { $json.dependencies.$k = $deps[$k] }
-  foreach ($k in $devDeps.Keys) { $json.devDependencies.$k = $devDeps[$k] }
-  ($json | ConvertTo-Json -Depth 10) | Out-File -FilePath $pkgPath -Encoding UTF8
-  Write-Host "Ensured deps in $pkgPath"
+function Read-JsonAsHashtable {
+  param([Parameter(Mandatory=$true)] [string] $Path)
+  $raw = Get-Content $Path -Raw
+  $obj = $raw | ConvertFrom-Json
+  return ConvertTo-Hashtable $obj
 }
 
-# --- Root Drizzle config ------------------------------------------------------
-$rootDrizzle = @'
-import type { Config } from "drizzle-kit";
+# --- Vars
+$branchName       = "apply-bankdash-v1-cleanup"
+$serverDir        = "server"
+$serverSrc        = Join-Path $serverDir "src"
+$serverAuth       = Join-Path $serverSrc "auth.ts"
+$serverDbDir      = Join-Path $serverSrc "db"
+$serverDbIndex    = Join-Path $serverDbDir "index.ts"
+$serverIndex      = Join-Path $serverSrc "index.ts"
+$rootPkgPath      = "package.json"
+$clientDir        = "client"
+$rootEnvExample   = ".env.example"
+$serverEnvExample = Join-Path $serverDir ".env.example"
 
-export default {
-  schema: "./server/src/db/schema.ts",
-  out: "./server/drizzle",
-  dialect: "sqlite",
-  dbCredentials: { url: "./server/dev.db" }
-} satisfies Config;
-'@
-Write-File "drizzle.config.ts" $rootDrizzle
+# --- Branch handling (robust)
+$currentBranch = (git rev-parse --abbrev-ref HEAD).Trim()
+Write-Host "Current git branch: $currentBranch"
 
-# --- Server files -------------------------------------------------------------
+$branchExists = $false
+$LASTEXITCODE = 0
+git show-ref --verify --quiet ("refs/heads/{0}" -f $branchName)
+if ($LASTEXITCODE -eq 0) { $branchExists = $true }
 
-$serverSchema = @'
-import { sqliteTable, integer, text, real } from "drizzle-orm/sqlite-core";
-import { relations } from "drizzle-orm";
+if ($branchExists) {
+  Write-Host "Switching to existing branch: $branchName"
+  git checkout $branchName | Out-Null
+} else {
+  Write-Host "Creating and switching to new branch: $branchName"
+  git checkout -b $branchName | Out-Null
+}
 
-export const users = sqliteTable("users", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  email: text("email").notNull().unique(),
-  passwordHash: text("password_hash").notNull(),
-  createdAt: text("created_at").notNull().default(() => new Date().toISOString()),
-});
+# --- Remove stray client/ if clearly redundant (no package.json)
+if (Test-Path $clientDir) {
+  $hasClientPkg = Test-Path (Join-Path $clientDir "package.json")
+  if (-not $hasClientPkg) {
+    Write-Host "Removing redundant '$clientDir/' (no package.json)." -ForegroundColor Yellow
+    Remove-Item -Recurse -Force $clientDir
+  } else {
+    Write-Host "'$clientDir/' contains a package.json; keeping it."
+  }
+}
 
-export const categories = sqliteTable("categories", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  name: text("name").notNull().unique(),
-  type: text("type").notNull().default("expense"), // income | expense | transfer
-});
+# --- Ensure server db dir exists
+if (-not (Test-Path $serverDbDir)) { New-Item -ItemType Directory -Force -Path $serverDbDir | Out-Null }
 
-export const accounts = sqliteTable("accounts", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  name: text("name").notNull(),
-  type: text("type").notNull(), // checking, savings, credit, investment
-  last4: text("last4"),
-  balance: real("balance").notNull().default(0),
-  institution: text("institution"),
-});
-
-export const transactions = sqliteTable("transactions", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  accountId: integer("account_id").notNull().references(() => accounts.id),
-  date: text("date").notNull(), // ISO date
-  description: text("description").notNull(),
-  amount: real("amount").notNull(), // negative=debit
-  categoryId: integer("category_id").references(() => categories.id),
-  notes: text("notes"),
-  createdAt: text("created_at").notNull().default(() => new Date().toISOString()),
-});
-
-export const recurringRules = sqliteTable("recurring_rules", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  pattern: text("pattern").notNull(),  // e.g., /Kroger/i
-  categoryId: integer("category_id").references(() => categories.id),
-  type: text("type").notNull().default("contains"), // contains|regex
-});
-
-export const bonuses = sqliteTable("bonuses", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  bank: text("bank").notNull(),
-  title: text("title").notNull(),
-  amount: real("amount").notNull().default(0),
-  status: text("status").notNull().default("planning"), // planning|active|earned
-  openedAt: text("opened_at"),
-  deadline: text("deadline"),
-  notes: text("notes"),
-});
-
-export const accountsRelations = relations(accounts, ({ many }) => ({
-  transactions: many(transactions),
-}));
-'@
-Write-File "server/src/db/schema.ts" $serverSchema
-
-$serverDbIndex = @'
+# --- server/src/db/index.ts
+@"
+import path from "path";
+import fs from "fs";
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import * as schema from "./schema";
 
-const dbFile = process.env.DATABASE_URL ?? "./dev.db";
+function toFsPath(input: string): string {
+  return input.startsWith("file:") ? input.slice(5) : input;
+}
+
+const raw =
+  process.env.SQLITE_DB_PATH ??
+  process.env.DATABASE_URL ??
+  "file:./data/bankdash.sqlite";
+
+const dbFile = path.resolve(process.cwd(), toFsPath(raw));
+fs.mkdirSync(path.dirname(dbFile), { recursive: true });
+
+if (process.env.NODE_ENV !== "test") {
+  console.log(`[db] Opening SQLite at: ${dbFile}`);
+}
+
 const sqlite = new Database(dbFile);
 export const db = drizzle(sqlite, { schema });
 export { schema };
-'@
-Write-File "server/src/db/index.ts" $serverDbIndex
+"@ | Set-Content -NoNewline $serverDbIndex -Encoding UTF8
+Write-Host "Wrote $serverDbIndex"
 
-$serverAuth = @'
-import jwt from "jsonwebtoken";
-import bcrypt from "bcryptjs";
-import { Request, Response, NextFunction } from "express";
-
-const JWT_SECRET = process.env.JWT_SECRET || "change_me";
-
-export const hashPassword = (plain: string) => bcrypt.hash(plain, 10);
-export const verifyPassword = (plain: string, hash: string) => bcrypt.compare(plain, hash);
-
-export const signToken = (payload: object, expiresIn = "7d") =>
-  jwt.sign(payload, JWT_SECRET, { expiresIn });
-
-export const authRequired = (req: Request, res: Response, next: NextFunction) => {
-  const h = req.headers.authorization;
-  if (!h?.startsWith("Bearer ")) return res.status(401).json({ error: "Missing token" });
-  const token = h.slice(7);
-  try {
-    (req as any).user = jwt.verify(token, JWT_SECRET);
-    return next();
-  } catch {
-    return res.status(401).json({ error: "Invalid/expired token" });
+# --- server/src/index.ts: ensure dotenv loads first
+if (Test-Path $serverIndex) {
+  $content = Get-Content $serverIndex -Raw
+  if ($content -notmatch 'import\s+"dotenv/config";') {
+    ("import `"dotenv/config`";`r`n" + $content) | Set-Content -NoNewline $serverIndex -Encoding UTF8
+    Write-Host "Prepended dotenv/config to $serverIndex"
+  } else {
+    Write-Host "dotenv/config already present in $serverIndex"
   }
-};
-'@
-Write-File "server/src/auth.ts" $serverAuth
-
-$serverRoutesAuth = @'
-import { Router } from "express";
-import { db, schema } from "../db";
-import { eq } from "drizzle-orm";
-import { hashPassword, verifyPassword, signToken } from "../auth";
-
-const r = Router();
-
-r.post("/register", async (req, res) => {
-  const { email, password } = req.body ?? {};
-  if (!email || !password) return res.status(400).json({ error: "email/password required" });
-  const exists = await db.query.users.findFirst({ where: eq(schema.users.email, email) });
-  if (exists) return res.status(409).json({ error: "Email already registered" });
-  const passwordHash = await hashPassword(password);
-  const [user] = await db.insert(schema.users).values({ email, passwordHash }).returning();
-  const token = signToken({ sub: user.id, email: user.email });
-  res.json({ token, user: { id: user.id, email: user.email } });
-});
-
-r.post("/login", async (req, res) => {
-  const { email, password } = req.body ?? {};
-  const user = await db.query.users.findFirst({ where: eq(schema.users.email, email) });
-  if (!user) return res.status(401).json({ error: "Invalid credentials" });
-  const ok = await verifyPassword(password, user.passwordHash);
-  if (!ok) return res.status(401).json({ error: "Invalid credentials" });
-  const token = signToken({ sub: user.id, email: user.email });
-  res.json({ token, user: { id: user.id, email: user.email } });
-});
-
-export default r;
-'@
-Write-File "server/src/routes/auth.ts" $serverRoutesAuth
-
-$serverRoutesAccounts = @'
-import { Router } from "express";
-import { db, schema } from "../db";
-import { eq, desc } from "drizzle-orm";
-import { authRequired } from "../auth";
-
-const r = Router();
-r.use(authRequired);
-
-r.get("/", async (_req, res) => {
-  const rows = await db.select().from(schema.accounts).orderBy(desc(schema.accounts.id));
-  res.json(rows);
-});
-
-r.post("/", async (req, res) => {
-  const { name, type, last4, balance = 0, institution } = req.body ?? {};
-  if (!name || !type) return res.status(400).json({ error: "name and type required" });
-  const [row] = await db.insert(schema.accounts).values({ name, type, last4, balance, institution }).returning();
-  res.json(row);
-});
-
-r.put("/:id", async (req, res) => {
-  const id = Number(req.params.id);
-  const { name, type, last4, balance, institution } = req.body ?? {};
-  const row = await db.update(schema.accounts).set({ name, type, last4, balance, institution }).where(eq(schema.accounts.id, id)).returning();
-  if (!row.length) return res.status(404).json({ error: "Not found" });
-  res.json(row[0]);
-});
-
-r.delete("/:id", async (req, res) => {
-  const id = Number(req.params.id);
-  await db.delete(schema.accounts).where(eq(schema.accounts.id, id)).run();
-  res.json({ ok: true });
-});
-
-export default r;
-'@
-Write-File "server/src/routes/accounts.ts" $serverRoutesAccounts
-
-$serverRoutesTransactions = @'
-import { Router } from "express";
-import { db, schema } from "../db";
-import { and, desc, eq, gte, lte, like, sql } from "drizzle-orm";
-import { authRequired } from "../auth";
-
-const r = Router();
-r.use(authRequired);
-
-// GET /api/transactions?search=&categoryId=&min=&max=&from=&to=&page=1&pageSize=20
-r.get("/", async (req, res) => {
-  const { search = "", categoryId, min, max, from, to, page = "1", pageSize = "20" } = req.query as any;
-
-  const where = and(
-    search ? like(schema.transactions.description, `%${search}%`) : undefined,
-    categoryId ? eq(schema.transactions.categoryId, Number(categoryId)) : undefined,
-    min ? gte(schema.transactions.amount, Number(min)) : undefined,
-    max ? lte(schema.transactions.amount, Number(max)) : undefined,
-    from ? gte(schema.transactions.date, String(from)) : undefined,
-    to ? lte(schema.transactions.date, String(to)) : undefined,
-  );
-
-  const p = Math.max(1, Number(page));
-  const ps = Math.max(1, Math.min(200, Number(pageSize)));
-  const offset = (p - 1) * ps;
-
-  const [rows, [{ count }]] = await Promise.all([
-    db.select().from(schema.transactions).where(where).orderBy(desc(schema.transactions.date)).limit(ps).offset(offset),
-    db.select({ count: sql<number>`count(*)` }).from(schema.transactions).where(where),
-  ]);
-
-  res.json({ rows, page: p, pageSize: ps, total: count });
-});
-
-r.post("/", async (req, res) => {
-  const { accountId, date, description, amount, categoryId, notes } = req.body ?? {};
-  if (!accountId || !date || !description || amount === undefined) return res.status(400).json({ error: "Missing fields" });
-  const [row] = await db.insert(schema.transactions).values({ accountId, date, description, amount, categoryId, notes }).returning();
-  res.json(row);
-});
-
-r.put("/:id", async (req, res) => {
-  const id = Number(req.params.id);
-  const { accountId, date, description, amount, categoryId, notes } = req.body ?? {};
-  const row = await db.update(schema.transactions)
-    .set({ accountId, date, description, amount, categoryId, notes })
-    .where(eq(schema.transactions.id, id))
-    .returning();
-  if (!row.length) return res.status(404).json({ error: "Not found" });
-  res.json(row[0]);
-});
-
-r.delete("/:id", async (req, res) => {
-  const id = Number(req.params.id);
-  await db.delete(schema.transactions).where(eq(schema.transactions.id, id)).run();
-  res.json({ ok: true });
-});
-
-// CSV Export
-r.get("/export.csv", async (_req, res) => {
-  const rows = await db.select().from(schema.transactions).orderBy(desc(schema.transactions.date));
-  const header = "id,accountId,date,description,amount,categoryId,notes\n";
-  const csv = header + rows.map(r =>
-    [r.id, r.accountId, r.date, `"${(r.description ?? "").replace(/"/g, '""')}"`, r.amount, r.categoryId ?? "", `"${(r.notes ?? "").replace(/"/g, '""')}"`].join(",")
-  ).join("\n");
-  res.setHeader("Content-Type", "text/csv");
-  res.setHeader("Content-Disposition", "attachment; filename=transactions.csv");
-  res.send(csv);
-});
-
-// CSV Import (text/csv in JSON body as { csv: "..." })
-r.post("/import.csv", async (req, res) => {
-  const text = String(req.body?.csv ?? "");
-  if (!text) return res.status(400).json({ error: "csv missing in body" });
-  const lines = text.split(/\r?\n/).filter(Boolean);
-  const [header, ...data] = lines;
-  const idx = (name: string) => header.split(",").findIndex(h => h.trim() === name);
-  const aI = idx("accountId"), dI = idx("date"), descI = idx("description"), amtI = idx("amount"), catI = idx("categoryId"), notesI = idx("notes");
-  if (aI < 0 || dI < 0 || descI < 0 || amtI < 0) return res.status(400).json({ error: "required columns: accountId,date,description,amount" });
-
-  const toInsert = data.map(line => {
-    const cols = line.match(/("([^"]|"")*"|[^,]+)/g)?.map(s => s.replace(/^"|"$/g, "").replace(/""/g, '"')) ?? [];
-    return {
-      accountId: Number(cols[aI]),
-      date: cols[dI],
-      description: cols[descI],
-      amount: Number(cols[amtI]),
-      categoryId: catI >= 0 && cols[catI] ? Number(cols[catI]) : null,
-      notes: notesI >= 0 ? cols[notesI] : null,
-    };
-  });
-  if (!toInsert.length) return res.json({ inserted: 0 });
-  await db.insert(schema.transactions).values(toInsert).run();
-  res.json({ inserted: toInsert.length });
-});
-
-export default r;
-'@
-Write-File "server/src/routes/transactions.ts" $serverRoutesTransactions
-
-$serverRoutesBonuses = @'
-import { Router } from "express";
-import { db, schema } from "../db";
-import { eq, desc } from "drizzle-orm";
-import { authRequired } from "../auth";
-
-const r = Router();
-r.use(authRequired);
-
-r.get("/", async (_req, res) => {
-  const rows = await db.select().from(schema.bonuses).orderBy(desc(schema.bonuses.id));
-  res.json(rows);
-});
-
-r.post("/", async (req, res) => {
-  const { bank, title, amount = 0, status = "planning", openedAt, deadline, notes } = req.body ?? {};
-  if (!bank || !title) return res.status(400).json({ error: "bank and title required" });
-  const [row] = await db.insert(schema.bonuses).values({ bank, title, amount, status, openedAt, deadline, notes }).returning();
-  res.json(row);
-});
-
-r.put("/:id", async (req, res) => {
-  const id = Number(req.params.id);
-  const { bank, title, amount, status, openedAt, deadline, notes } = req.body ?? {};
-  const row = await db.update(schema.bonuses).set({ bank, title, amount, status, openedAt, deadline, notes }).where(eq(schema.bonuses.id, id)).returning();
-  if (!row.length) return res.status(404).json({ error: "Not found" });
-  res.json(row[0]);
-});
-
-r.delete("/:id", async (req, res) => {
-  const id = Number(req.params.id);
-  await db.delete(schema.bonuses).where(eq(schema.bonuses.id, id)).run();
-  res.json({ ok: true });
-});
-
-export default r;
-'@
-Write-File "server/src/routes/bonuses.ts" $serverRoutesBonuses
-
-$serverIndex = @'
-import "dotenv/config";
-import express from "express";
-import cors from "cors";
-import { db, schema } from "./db";
-import { desc } from "drizzle-orm";
-import authRoutes from "./routes/auth";
-import accountsRoutes from "./routes/accounts";
-import txRoutes from "./routes/transactions";
-import bonusRoutes from "./routes/bonuses";
-
-const app = express();
-app.use(cors());
-app.use(express.json({ limit: "2mb" }));
-
-app.get("/health", (_req, res) => res.json({ ok: true }));
-
-// Public dashboard summary (adjust to require auth if desired)
-app.get("/api/dashboard", async (_req, res) => {
-  const accounts = await db.select().from(schema.accounts);
-  const transactions = await db.select().from(schema.transactions).orderBy(desc(schema.transactions.date)).limit(5);
-  const totalAssets = accounts.filter(a => a.type !== "credit").reduce((s, a) => s + a.balance, 0);
-  const ccDebt = accounts.filter(a => a.type === "credit").reduce((s, a) => s + Math.abs(Math.min(a.balance, 0)), 0);
-  const netWorth = totalAssets - ccDebt;
-  res.json({ stats: { netWorth, totalAssets, creditCardDebt: ccDebt, accountsCount: accounts.length }, accounts: accounts.slice(0, 3), transactions });
-});
-
-app.use("/api/auth", authRoutes);
-app.use("/api/accounts", accountsRoutes);
-app.use("/api/transactions", txRoutes);
-app.use("/api/bonuses", bonusRoutes);
-
-const PORT = Number(process.env.PORT || 4000);
-app.listen(PORT, () => console.log(`API on http://localhost:${PORT}`));
-'@
-Write-File "server/src/index.ts" $serverIndex
-
-$serverSeed = @'
-import "dotenv/config";
-import { db, schema } from "./db";
-import { hashPassword } from "./auth";
-
-async function main() {
-  await db.delete(schema.transactions).run();
-  await db.delete(schema.accounts).run();
-  await db.delete(schema.bonuses).run();
-  await db.delete(schema.categories).run();
-  await db.delete(schema.users).run();
-
-  const passwordHash = await hashPassword("secret123");
-  const [user] = await db.insert(schema.users).values({ email: "demo@bankdash.app", passwordHash }).returning();
-
-  const cats = await db.insert(schema.categories).values([
-    { name: "Groceries", type: "expense" },
-    { name: "Dining", type: "expense" },
-    { name: "Utilities", type: "expense" },
-    { name: "Income", type: "income" },
-    { name: "Transfer", type: "transfer" },
-  ]).returning();
-
-  const [accChecking] = await db.insert(schema.accounts).values([
-    { name: "Checking 1232", type: "checking", last4: "1232", balance: 2000, institution: "Your Bank" },
-    { name: "BSB Savings", type: "savings", last4: "1100", balance: 15100, institution: "Buckeye State Bank" },
-    { name: "Freedom Unlimited", type: "credit", last4: "9429", balance: -300, institution: "Chase" },
-  ]).returning();
-
-  const cat = (name: string) => cats.find(c => c.name === name)!.id;
-
-  await db.insert(schema.transactions).values([
-    { accountId: accChecking.id, date: "2025-09-05", description: "Kroger", amount: -43.04, categoryId: cat("Groceries") },
-    { accountId: accChecking.id, date: "2025-09-04", description: "Subway (Google Pay)", amount: -10.71, categoryId: cat("Dining") },
-    { accountId: accChecking.id, date: "2025-09-03", description: "Utility Bill", amount: -120.25, categoryId: cat("Utilities") },
-    { accountId: accChecking.id, date: "2025-09-02", description: "Amex Send: Add Money", amount: 500.00, categoryId: cat("Transfer") },
-    { accountId: accChecking.id, date: "2025-09-01", description: "Paycheck", amount: 2500.00, categoryId: cat("Income") },
-  ]);
-
-  await db.insert(schema.bonuses).values([
-    { bank: "Capital One", title: "Checking $300", amount: 300, status: "active", openedAt: "2025-08-14" },
-    { bank: "Buckeye State Bank", title: "14% APY promo", amount: 0, status: "active", notes: "90-day promo, lock-in 180d" },
-    { bank: "Connexus", title: "$300 Checking", amount: 300, status: "planning" },
-  ]);
-
-  console.log("Seed complete. demo@bankdash.app / secret123");
-}
-main();
-'@
-Write-File "server/src/seed.ts" $serverSeed
-
-Write-File "server/.env.example" @'
-DATABASE_URL=./dev.db
-PORT=4000
-JWT_SECRET=change_me
-'@
-
-# Update server package.json scripts & deps safely
-$serverPkg = "server/package.json"
-$serverScripts = @{
-  "dev" = "nodemon --watch src --ext ts --exec ""ts-node ./src/index.ts"""
-  "seed" = "ts-node ./src/seed.ts"
-  "db:push" = "drizzle-kit push"
-  "db:studio" = "drizzle-kit studio"
-  "build" = "tsc"
-  "start" = "node dist/index.js"
-}
-Merge-PackageJsonScripts $serverPkg $serverScripts
-
-Ensure-JsonDeps $serverPkg `
-  @{ "express"="^5.1.0"; "cors"="^2.8.5"; "drizzle-orm"="^0.44.5"; "better-sqlite3"="^12.2.0"; "dotenv"="^17.2.2"; "bcryptjs"="^2.4.3"; "jsonwebtoken"="^9.0.2" } `
-  @{ "@types/node"="^20.11.20"; "@types/express"="^5.0.3"; "@types/cors"="^2.8.19"; "@types/better-sqlite3"="^7.6.13"; "ts-node"="^10.9.2"; "nodemon"="^3.1.10"; "typescript"="^5.4.5"; "drizzle-kit"="^0.24.2" }
-
-# --- Client files -------------------------------------------------------------
-
-$clientApi = @'
-import axios from "axios";
-const baseURL = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
-export const api = axios.create({ baseURL });
-api.interceptors.request.use((config) => {
-  const token = localStorage.getItem("token");
-  if (token) config.headers.Authorization = `Bearer ${token}`;
-  return config;
-});
-'@
-Write-File "client/src/lib/api.ts" $clientApi
-
-$clientSidebar = @'
-import { Link, useLocation } from "react-router-dom";
-
-const nav = [
-  { to: "/", label: "Dashboard" },
-  { to: "/transactions", label: "Transactions" },
-  { to: "/accounts", label: "Accounts" },
-  { to: "/bonuses", label: "Bonuses" },
-];
-
-export default function Sidebar() {
-  const loc = useLocation();
-  return (
-    <aside className="hidden md:flex w-64 flex-col gap-1 border-r bg-white p-3">
-      <div className="px-2 py-1 text-xs font-semibold uppercase tracking-widest text-zinc-500">BankDash</div>
-      {nav.map(n => {
-        const active = loc.pathname === n.to;
-        return (
-          <Link key={n.to} to={n.to}
-            className={`rounded-lg px-3 py-2 text-sm hover:bg-zinc-100 ${active ? "bg-zinc-100 font-medium" : ""}`}>
-            {n.label}
-          </Link>
-        );
-      })}
-      <button onClick={()=>{ localStorage.removeItem("token"); window.location.href="/login";}}
-        className="mt-auto rounded-lg border px-3 py-2 text-sm">Logout</button>
-    </aside>
-  );
-}
-'@
-Write-File "client/src/components/Sidebar.tsx" $clientSidebar
-
-$clientCard = @'
-export function Card(props: React.PropsWithChildren<{title?: string; className?: string;}>) {
-  return (
-    <div className={`rounded-2xl border bg-white shadow-sm ${props.className ?? ""}`}>
-      {props.title && <div className="border-b px-4 py-3 text-sm font-semibold">{props.title}</div>}
-      <div className="p-4">{props.children}</div>
-    </div>
-  );
-}
-'@
-Write-File "client/src/components/Card.tsx" $clientCard
-
-$clientLogin = @'
-import { useState } from "react";
-import { api } from "@/lib/api";
-
-export default function Login() {
-  const [email, setEmail] = useState("demo@bankdash.app");
-  const [password, setPassword] = useState("secret123");
-  const [err, setErr] = useState<string | null>(null);
-
-  const submit = async (path: "login" | "register") => {
-    setErr(null);
-    try {
-      const { data } = await api.post(`/api/auth/${path}`, { email, password });
-      localStorage.setItem("token", data.token);
-      window.location.href = "/";
-    } catch (e: any) {
-      setErr(e?.response?.data?.error ?? "Failed");
-    }
-  };
-
-  return (
-    <div className="min-h-screen grid place-items-center bg-zinc-50">
-      <div className="w-full max-w-sm rounded-2xl border bg-white p-6 shadow-sm">
-        <h1 className="text-lg font-semibold">BankDash — Sign in</h1>
-        <div className="mt-4 space-y-3">
-          <input className="w-full rounded-lg border px-3 py-2 text-sm" value={email} onChange={e=>setEmail(e.target.value)} placeholder="Email" />
-          <input className="w-full rounded-lg border px-3 py-2 text-sm" type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="Password" />
-          {err && <p className="text-sm text-rose-600">{err}</p>}
-          <div className="flex gap-2">
-            <button onClick={()=>submit("login")} className="rounded-lg bg-black px-3 py-2 text-sm text-white">Login</button>
-            <button onClick={()=>submit("register")} className="rounded-lg border px-3 py-2 text-sm">Register</button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-'@
-Write-File "client/src/pages/Login.tsx" $clientLogin
-
-$clientDashboard = @'
-import { useEffect, useState } from "react";
-import { api } from "@/lib/api";
-import { Card } from "@/components/Card";
-
-export default function Dashboard() {
-  const [data, setData] = useState<any>(null);
-  useEffect(() => { api.get("/api/dashboard").then(r=>setData(r.data)); }, []);
-  if (!data) return <div className="p-6 text-sm text-zinc-600">Loading…</div>;
-  const fmt = (n:number) => n.toLocaleString(undefined, {style:"currency",currency:"USD"});
-
-  return (
-    <div className="flex min-h-screen">
-      <div className="flex-1 bg-zinc-50">
-        <header className="sticky top-0 z-10 border-b bg-white px-6 py-3">
-          <h1 className="text-lg font-semibold">Welcome Back!</h1>
-          <p className="text-xs text-zinc-500">Overview of your finances</p>
-        </header>
-        <main className="mx-auto max-w-7xl space-y-6 px-4 py-6">
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-            <Card><p className="text-xs uppercase text-zinc-500">Net Worth</p><p className="mt-1 text-2xl font-semibold">{fmt(data.stats.netWorth)}</p></Card>
-            <Card><p className="text-xs uppercase text-zinc-500">Total Assets</p><p className="mt-1 text-2xl font-semibold text-emerald-600">{fmt(data.stats.totalAssets)}</p></Card>
-            <Card><p className="text-xs uppercase text-zinc-500">Credit Card Debt</p><p className="mt-1 text-2xl font-semibold text-rose-600">{fmt(data.stats.creditCardDebt)}</p></Card>
-            <Card><p className="text-xs uppercase text-zinc-500">Accounts</p><p className="mt-1 text-2xl font-semibold">{data.stats.accountsCount}</p></Card>
-          </div>
-          <div className="grid gap-4 lg:grid-cols-3">
-            <Card title="Recent Transactions" className="lg:col-span-2">
-              <table className="w-full text-sm">
-                <thead className="text-left text-zinc-500"><tr><th className="py-2">Date</th><th>Description</th><th className="text-right">Amount</th></tr></thead>
-                <tbody>
-                  {data.transactions.map((t:any) => (
-                    <tr key={t.id} className="border-t">
-                      <td className="py-2">{t.date}</td>
-                      <td>{t.description}</td>
-                      <td className={`text-right ${t.amount<0?"text-rose-600":"text-emerald-600"}`}>{t.amount<0?"-":""}{fmt(Math.abs(t.amount))}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </Card>
-            <Card title="Quick Actions">
-              <div className="grid grid-cols-2 gap-3">
-                {["Transactions","Accounts","Bonuses"].map((a) => (
-                  <a key={a} href={`/${a.toLowerCase()}`} className="rounded-xl border px-3 py-2 text-sm hover:bg-zinc-50">{a}</a>
-                ))}
-                <a href="/api/transactions/export.csv" className="rounded-xl border px-3 py-2 text-sm hover:bg-zinc-50">Export CSV</a>
-              </div>
-            </Card>
-          </div>
-        </main>
-      </div>
-    </div>
-  );
-}
-'@
-Write-File "client/src/pages/Dashboard.tsx" $clientDashboard
-
-$clientTransactions = @'
-import { useEffect, useMemo, useState } from "react";
-import { api } from "@/lib/api";
-import { Card } from "@/components/Card";
-
-type Tx = { id:number; accountId:number; date:string; description:string; amount:number; categoryId?:number; notes?:string };
-
-export default function TransactionsPage() {
-  const [rows, setRows] = useState<Tx[]>([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [pageSize] = useState(20);
-  const [search, setSearch] = useState("");
-  const [categoryId, setCategoryId] = useState<string>("");
-  const [min, setMin] = useState<string>("");
-  const [max, setMax] = useState<string>("");
-  const [from, setFrom] = useState<string>("");
-  const [to, setTo] = useState<string>("");
-
-  const qs = useMemo(() => ({ search, categoryId, min, max, from, to, page, pageSize }), [search,categoryId,min,max,from,to,page,pageSize]);
-
-  useEffect(() => {
-    const p = new URLSearchParams(Object.entries(qs).filter(([,_v])=>String(_v)));
-    api.get(`/api/transactions?${p.toString()}`).then(r => { setRows(r.data.rows); setTotal(r.data.total); });
-  }, [qs]);
-
-  const fmt = (n:number) => n.toLocaleString(undefined, { style:"currency", currency:"USD" });
-
-  const importCsv = async (file: File) => {
-    const text = await file.text();
-    await api.post("/api/transactions/import.csv", { csv: text });
-    setPage(1);
-    const p = new URLSearchParams(Object.entries(qs).filter(([,_v])=>String(_v)));
-    api.get(`/api/transactions?${p.toString()}`).then(r => { setRows(r.data.rows); setTotal(r.data.total); });
-  };
-
-  return (
-    <div className="flex min-h-screen">
-      <div className="flex-1 bg-zinc-50">
-        <header className="border-b bg-white px-6 py-3">
-          <h1 className="text-lg font-semibold">Transactions</h1>
-        </header>
-        <main className="mx-auto max-w-7xl space-y-4 px-4 py-6">
-          <Card title="Filters">
-            <div className="grid gap-3 md:grid-cols-6">
-              <input className="rounded-lg border px-3 py-2 text-sm md:col-span-2" placeholder="Search description…" value={search} onChange={e=>{setSearch(e.target.value); setPage(1);}} />
-              <input className="rounded-lg border px-3 py-2 text-sm" placeholder="Category ID" value={categoryId} onChange={e=>{setCategoryId(e.target.value); setPage(1);}} />
-              <input className="rounded-lg border px-3 py-2 text-sm" placeholder="Min $" value={min} onChange={e=>{setMin(e.target.value); setPage(1);}} />
-              <input className="rounded-lg border px-3 py-2 text-sm" placeholder="Max $" value={max} onChange={e=>{setMax(e.target.value); setPage(1);}} />
-              <input type="date" className="rounded-lg border px-3 py-2 text-sm" value={from} onChange={e=>{setFrom(e.target.value); setPage(1);}} />
-              <input type="date" className="rounded-lg border px-3 py-2 text-sm" value={to} onChange={e=>{setTo(e.target.value); setPage(1);}} />
-            </div>
-          </Card>
-
-          <Card title="Actions">
-            <div className="flex flex-wrap gap-3">
-              <a className="rounded-lg border px-3 py-2 text-sm" href="/api/transactions/export.csv">Export CSV</a>
-              <label className="rounded-lg border px-3 py-2 text-sm cursor-pointer">
-                Import CSV<input type="file" accept=".csv,text/csv" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) importCsv(f); }} />
-              </label>
-            </div>
-          </Card>
-
-          <Card title="Results">
-            <table className="w-full text-sm">
-              <thead className="text-left text-zinc-500">
-                <tr><th className="py-2">Date</th><th>Description</th><th>Account</th><th className="text-right">Amount</th></tr>
-              </thead>
-              <tbody>
-                {rows.map(t => (
-                  <tr key={t.id} className="border-t">
-                    <td className="py-2">{t.date}</td>
-                    <td>{t.description}</td>
-                    <td>{t.accountId}</td>
-                    <td className={`text-right ${t.amount<0?"text-rose-600":"text-emerald-600"}`}>{t.amount<0?"-":""}{fmt(Math.abs(t.amount))}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-
-            <div className="mt-3 flex items-center justify-between text-sm">
-              <span>Total: {total.toLocaleString()}</span>
-              <div className="flex items-center gap-2">
-                <button className="rounded-lg border px-2 py-1" disabled={page<=1} onClick={()=>setPage(p=>p-1)}>Prev</button>
-                <span>Page {page}</span>
-                <button className="rounded-lg border px-2 py-1" disabled={rows.length<pageSize} onClick={()=>setPage(p=>p+1)}>Next</button>
-              </div>
-            </div>
-          </Card>
-        </main>
-      </div>
-    </div>
-  );
-}
-'@
-Write-File "client/src/pages/Transactions.tsx" $clientTransactions
-
-$clientAccounts = @'
-import { useEffect, useState } from "react";
-import { api } from "@/lib/api";
-import { Card } from "@/components/Card";
-
-type Account = { id:number; name:string; type:string; last4?:string; balance:number; institution?:string };
-
-export default function AccountsPage() {
-  const [rows, setRows] = useState<Account[]>([]);
-  const [form, setForm] = useState<Partial<Account>>({ type:"checking", balance:0 });
-
-  const load = async () => { const { data } = await api.get("/api/accounts"); setRows(data); };
-  useEffect(() => { load(); }, []);
-
-  const save = async () => {
-    if (form.id) await api.put(`/api/accounts/${form.id}`, form);
-    else await api.post("/api/accounts", form);
-    setForm({ type:"checking", balance:0 });
-    load();
-  };
-  const edit = (a: Account) => setForm(a);
-  const del = async (id:number) => { await api.delete(`/api/accounts/${id}`); load(); };
-
-  return (
-    <div className="flex min-h-screen">
-      <div className="flex-1 bg-zinc-50">
-        <header className="border-b bg-white px-6 py-3"><h1 className="text-lg font-semibold">Accounts</h1></header>
-        <main className="mx-auto max-w-5xl space-y-4 px-4 py-6">
-          <Card title="New / Edit Account">
-            <div className="grid gap-3 md:grid-cols-5">
-              <input className="rounded-lg border px-3 py-2 text-sm md:col-span-2" placeholder="Name" value={form.name ?? ""} onChange={e=>setForm({...form, name:e.target.value})}/>
-              <select className="rounded-lg border px-3 py-2 text-sm" value={form.type} onChange={e=>setForm({...form, type:e.target.value})}>
-                {["checking","savings","credit","investment"].map(t => <option key={t}>{t}</option>)}
-              </select>
-              <input className="rounded-lg border px-3 py-2 text-sm" placeholder="Last4" value={form.last4 ?? ""} onChange={e=>setForm({...form, last4:e.target.value})}/>
-              <input className="rounded-lg border px-3 py-2 text-sm" placeholder="Institution" value={form.institution ?? ""} onChange={e=>setForm({...form, institution:e.target.value})}/>
-              <input className="rounded-lg border px-3 py-2 text-sm" placeholder="Balance" value={form.balance ?? 0} onChange={e=>setForm({...form, balance:Number(e.target.value)})}/>
-            </div>
-            <div className="mt-3">
-              <button onClick={save} className="rounded-lg bg-black px-3 py-2 text-sm text-white">{form.id ? "Update" : "Create"}</button>
-              {form.id && <button onClick={()=>setForm({ type:"checking", balance:0 })} className="ml-2 rounded-lg border px-3 py-2 text-sm">Cancel</button>}
-            </div>
-          </Card>
-
-          <Card title="Accounts">
-            <table className="w-full text-sm">
-              <thead className="text-left text-zinc-500"><tr><th>Name</th><th>Type</th><th>Last4</th><th>Institution</th><th className="text-right">Balance</th><th></th></tr></thead>
-              <tbody>
-                {rows.map(a => (
-                  <tr key={a.id} className="border-t">
-                    <td className="py-2">{a.name}</td><td>{a.type}</td><td>{a.last4}</td><td>{a.institution}</td>
-                    <td className={`text-right ${a.type==="credit"?"text-rose-600":"text-emerald-600"}`}>{a.balance.toLocaleString(undefined,{style:"currency",currency:"USD"})}</td>
-                    <td className="text-right">
-                      <button className="rounded-lg border px-2 py-1 mr-2" onClick={()=>edit(a)}>Edit</button>
-                      <button className="rounded-lg border px-2 py-1" onClick={()=>del(a.id)}>Delete</button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </Card>
-        </main>
-      </div>
-    </div>
-  );
-}
-'@
-Write-File "client/src/pages/Accounts.tsx" $clientAccounts
-
-$clientBonuses = @'
-import { useEffect, useState } from "react";
-import { api } from "@/lib/api";
-import { Card } from "@/components/Card";
-
-type Bonus = { id:number; bank:string; title:string; amount:number; status:"planning"|"active"|"earned"; openedAt?:string; deadline?:string; notes?:string };
-
-export default function BonusesPage() {
-  const [rows, setRows] = useState<Bonus[]>([]);
-  const [form, setForm] = useState<Partial<Bonus>>({ status:"planning", amount:0 });
-
-  const load = async () => { const { data } = await api.get("/api/bonuses"); setRows(data); };
-  useEffect(() => { load(); }, []);
-
-  const save = async () => {
-    if (form.id) await api.put(`/api/bonuses/${form.id}`, form);
-    else await api.post("/api/bonuses", form);
-    setForm({ status:"planning", amount:0 });
-    load();
-  };
-
-  return (
-    <div className="flex min-h-screen">
-      <div className="flex-1 bg-zinc-50">
-        <header className="border-b bg-white px-6 py-3"><h1 className="text-lg font-semibold">Bank Bonuses</h1></header>
-        <main className="mx-auto max-w-6xl space-y-4 px-4 py-6">
-          <Card title="Add / Edit">
-            <div className="grid gap-3 md:grid-cols-6">
-              <input className="rounded-lg border px-3 py-2 text-sm" placeholder="Bank" value={form.bank ?? ""} onChange={e=>setForm({...form, bank:e.target.value})}/>
-              <input className="rounded-lg border px-3 py-2 text-sm md:col-span-2" placeholder="Title" value={form.title ?? ""} onChange={e=>setForm({...form, title:e.target.value})}/>
-              <select className="rounded-lg border px-3 py-2 text-sm" value={form.status} onChange={e=>setForm({...form, status: e.target.value as any})}>
-                {["planning","active","earned"].map(s => <option key={s}>{s}</option>)}
-              </select>
-              <input className="rounded-lg border px-3 py-2 text-sm" placeholder="Amount" value={form.amount ?? 0} onChange={e=>setForm({...form, amount:Number(e.target.value)})}/>
-              <input type="date" className="rounded-lg border px-3 py-2 text-sm" value={form.openedAt ?? ""} onChange={e=>setForm({...form, openedAt:e.target.value})}/>
-              <input type="date" className="rounded-lg border px-3 py-2 text-sm" value={form.deadline ?? ""} onChange={e=>setForm({...form, deadline:e.target.value})}/>
-              <input className="rounded-lg border px-3 py-2 text-sm md:col-span-6" placeholder="Notes" value={form.notes ?? ""} onChange={e=>setForm({...form, notes:e.target.value})}/>
-            </div>
-            <div className="mt-3"><button onClick={save} className="rounded-lg bg-black px-3 py-2 text-sm text-white">{form.id?"Update":"Save"}</button></div>
-          </Card>
-
-          {(["planning","active","earned"] as const).map(status => (
-            <Card key={status} title={status.toUpperCase()}>
-              <div className="grid gap-3 md:grid-cols-3">
-                {rows.filter(b => b.status===status).map(b => (
-                  <div key={b.id} className="rounded-xl border p-3 text-sm">
-                    <div className="font-medium">{b.bank} — {b.title}</div>
-                    <div className="text-zinc-500">Amount: ${b.amount}</div>
-                    {b.openedAt && <div className="text-zinc-500">Opened: {b.openedAt}</div>}
-                    {b.deadline && <div className="text-zinc-500">Deadline: {b.deadline}</div>}
-                    {b.notes && <div className="text-zinc-500">{b.notes}</div>}
-                    <div className="mt-2 flex gap-2">
-                      <button className="rounded-lg border px-2 py-1" onClick={()=>setForm(b)}>Edit</button>
-                      <button className="rounded-lg border px-2 py-1" onClick={async()=>{ await api.put(`/api/bonuses/${b.id}`, { ...b, status: b.status==="active"?"earned":"active" }); load(); }}>
-                        {b.status==="active" ? "Mark Earned" : "Activate"}
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </Card>
-          ))}
-        </main>
-      </div>
-    </div>
-  );
-}
-'@
-Write-File "client/src/pages/Bonuses.tsx" $clientBonuses
-
-$clientMain = @'
-import React from "react";
-import ReactDOM from "react-dom/client";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import "./index.css";
-import Login from "@/pages/Login";
-import Dashboard from "@/pages/Dashboard";
-import TransactionsPage from "@/pages/Transactions";
-import AccountsPage from "@/pages/Accounts";
-import BonusesPage from "@/pages/Bonuses";
-import Sidebar from "@/components/Sidebar";
-
-function Protected({ children }: { children: React.ReactNode }) {
-  const token = localStorage.getItem("token");
-  if (!token) return <Navigate to="/login" replace />;
-  return (
-    <div className="flex">
-      <Sidebar />
-      <div className="flex-1">{children}</div>
-    </div>
-  );
 }
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <BrowserRouter>
-      <Routes>
-        <Route path="/login" element={<Login />} />
-        <Route path="/" element={<Protected><Dashboard /></Protected>} />
-        <Route path="/transactions" element={<Protected><TransactionsPage /></Protected>} />
-        <Route path="/accounts" element={<Protected><AccountsPage /></Protected>} />
-        <Route path="/bonuses" element={<Protected><BonusesPage /></Protected>} />
-      </Routes>
-    </BrowserRouter>
-  </React.StrictMode>
-);
-'@
-Write-File "client/src/main.tsx" $clientMain
+# --- server/src/auth.ts
+@"
+import jwt, { type Secret, type SignOptions } from "jsonwebtoken";
+import type { StringValue } from "ms";
+import bcrypt from "bcryptjs";
+import type { Request, Response, NextFunction } from "express";
 
-Write-File "client/.env.example" @'
+const JWT_SECRET: Secret =
+  process.env.JWT_SECRET ??
+  (() => {
+    throw new Error("JWT_SECRET is required (set it in your .env)");
+  })();
+
+const DEFAULT_EXPIRES_IN: StringValue = "1h";
+
+export function signToken(
+  payload: string | object | Buffer,
+  options: SignOptions = {}
+): string {
+  const envExpires = process.env.JWT_EXPIRES_IN as unknown as StringValue | undefined;
+  const expiresIn: number | StringValue | undefined =
+    options.expiresIn ?? envExpires ?? DEFAULT_EXPIRES_IN;
+
+  return jwt.sign(payload, JWT_SECRET, { ...options, expiresIn });
+}
+
+export function verifyToken<T = unknown>(token: string): T {
+  return jwt.verify(token, JWT_SECRET) as T;
+}
+
+// bcrypt rounds
+const BCRYPT_ROUNDS = Number(process.env.BCRYPT_ROUNDS ?? 10);
+
+export async function hashPassword(plain: string): Promise<string> {
+  const salt = await bcrypt.genSalt(BCRYPT_ROUNDS);
+  return bcrypt.hash(plain, salt);
+}
+export function hashPasswordSync(plain: string): string {
+  const salt = bcrypt.genSaltSync(BCRYPT_ROUNDS);
+  return bcrypt.hashSync(plain, salt);
+}
+export function comparePassword(plain: string, hashed: string): Promise<boolean> {
+  return bcrypt.compare(plain, hashed);
+}
+export function comparePasswordSync(plain: string, hashed: string): boolean {
+  return bcrypt.compareSync(plain, hashed);
+}
+
+// Aliases to match route imports
+export const verifyPassword = comparePassword;
+export const verifyPasswordSync = comparePasswordSync;
+
+// Express auth middleware
+export interface AuthRequest extends Request { user?: any; }
+export function authRequired(req: AuthRequest, res: Response, next: NextFunction) {
+  const authHeader = req.headers["authorization"];
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({ error: "Missing or invalid Authorization header" });
+  }
+  const token = authHeader.split(" ")[1];
+  try {
+    const decoded = verifyToken(token);
+    req.user = decoded;
+    next();
+  } catch {
+    return res.status(401).json({ error: "Invalid or expired token" });
+  }
+}
+"@ | Set-Content -NoNewline $serverAuth -Encoding UTF8
+Write-Host "Wrote $serverAuth"
+
+# --- Root package.json: read as Hashtable (PS5-safe) and edit scripts
+if (-not (Test-Path $rootPkgPath)) { throw "No root package.json found." }
+$pkg = Read-JsonAsHashtable -Path $rootPkgPath
+
+if (-not $pkg.ContainsKey('scripts')) { $pkg['scripts'] = @{} }
+
+# Ensure dev uses cross-env on Windows
+if (-not $pkg['scripts'].ContainsKey('dev')) {
+  $pkg['scripts']['dev'] = 'cross-env NODE_ENV=development vite'
+} else {
+  $devScript = [string]$pkg['scripts']['dev']
+  if ($devScript -match '(^| )NODE_ENV=') {
+    $devScript = $devScript -replace 'NODE_ENV=', 'cross-env NODE_ENV='
+    if ($devScript -notmatch '^cross-env ') { $devScript = 'cross-env ' + $devScript }
+    $pkg['scripts']['dev'] = $devScript
+  }
+}
+
+# Add helper scripts if server exists
+if (Test-Path $serverDir) {
+  if (-not $pkg['scripts'].ContainsKey('dev:server')) { $pkg['scripts']['dev:server'] = 'cd server && npm run dev' }
+  if (-not $pkg['scripts'].ContainsKey('dev:all'))    { $pkg['scripts']['dev:all']    = 'concurrently -n UI,API -c auto "npm run dev" "npm run dev:server"' }
+}
+
+# Write package.json back
+($pkg | ConvertTo-Json -Depth 100) | Set-Content -NoNewline $rootPkgPath -Encoding UTF8
+Write-Host "Patched $rootPkgPath scripts"
+
+# --- .gitignore
+@"
+# Node
+node_modules/
+dist/
+.build/
+.next/
+pnpm-lock.yaml
+npm-debug.log*
+yarn-error.log*
+
+# Vite
+.vite/
+*.local
+
+# Logs
+logs/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.*.local
+
+# SQLite data
+/server/data/*.sqlite
+/server/data/*.db
+/server/data/*.sqlite-journal
+"@ | Set-Content -NoNewline ".gitignore" -Encoding UTF8
+Write-Host "Wrote .gitignore"
+
+# --- Example envs
+@"
 VITE_API_URL=http://localhost:4000
-'@
+"@ | Set-Content -NoNewline $rootEnvExample -Encoding UTF8
+Write-Host "Wrote $rootEnvExample"
 
-# --- Git: commit to the specified branch -------------------------------------
-try {
-  git rev-parse --is-inside-work-tree *> $null
-} catch {
-  Write-Host "Not a git repository. Skipping git steps."
-  exit 0
+@"
+# Required
+DATABASE_URL=file:./data/bankdash.sqlite
+JWT_SECRET=change_me_to_a_long_random_string
+JWT_EXPIRES_IN=1h
+BCRYPT_ROUNDS=10
+PORT=4000
+CORS_ORIGIN=http://localhost:5173
+
+# Optional alternative to DATABASE_URL:
+# SQLITE_DB_PATH=./data/bankdash.sqlite
+"@ | Set-Content -NoNewline $serverEnvExample -Encoding UTF8
+Write-Host "Wrote $serverEnvExample"
+
+# --- Dev tools
+Write-Host "Installing dev tools (cross-env, concurrently) at root..."
+npm pkg set scripts.postinstall="echo postinstall ok" | Out-Null
+npm i -D cross-env concurrently | Out-Null
+
+# --- Server deps
+Write-Host "Ensuring server auth deps (bcryptjs)..." -ForegroundColor Gray
+Push-Location $serverDir
+npm i bcryptjs | Out-Null
+npm i -D @types/bcryptjs | Out-Null
+Pop-Location
+
+# --- Commit & push
+git add -A
+$changed = (git status --porcelain)
+if ([string]::IsNullOrWhiteSpace($changed)) {
+  Write-Host "No changes to commit."
+} else {
+  git commit -m "BankDash: cleanup + Windows-friendly dev + server auth/db fixes" | Out-Null
+  Write-Host "Committed changes on $branchName"
 }
 
-# checkout target branch (do not create new, assume it exists per user request)
-git checkout $Branch
-git add server client drizzle.config.ts
-git commit -m "BankDash v1 update: Transactions (filters/CSV), Accounts CRUD, Bonuses, JWT auth, wiring"
-Write-Host "`n✅ Files written & committed on '$Branch'."
+Write-Host "Pushing $branchName..."
+git push -u origin $branchName
 
-Write-Host @"
-Next steps:
-
-1) Install dependencies
-
-   cd server
-   npm i
-   npm i express cors drizzle-orm better-sqlite3 dotenv bcryptjs jsonwebtoken
-   npm i -D @types/node @types/express @types/cors @types/better-sqlite3 ts-node nodemon typescript drizzle-kit
-
-   cd ..\client
-   npm i
-   npm i axios
-
-2) Database & run
-
-   # from repo root or server/
-   npx drizzle-kit push
-   cd server
-   npm run seed
-   npm run dev     # API http://localhost:4000
-
-   # new terminal
-   cd ..\client
-   npm run dev     # http://localhost:5173
-
-3) Login
-
-   Email: demo@bankdash.app
-   Pass : secret123
-
-4) Push your branch & open PR (if needed)
-
-   git push -u origin $Branch
-"@
+Write-Host "==> Done. Branch pushed: $branchName" -ForegroundColor Green
