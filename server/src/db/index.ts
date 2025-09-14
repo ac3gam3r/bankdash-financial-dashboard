@@ -17,7 +17,7 @@ const dbFile = path.resolve(process.cwd(), toFsPath(raw));
 fs.mkdirSync(path.dirname(dbFile), { recursive: true });
 
 if (process.env.NODE_ENV !== "test") {
-  console.log([db] Opening SQLite at: );
+  console.log(`[db] Opening SQLite at: ${dbFile}`);
 }
 
 const sqlite = new Database(dbFile);
