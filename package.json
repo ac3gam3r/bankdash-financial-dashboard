@@ -1,14 +1,14 @@
 {
-    "scripts": {
-        "build": "vite build && esbuild server/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist",
-        "db:push": "drizzle-kit push",
-        "start": "NODE_ENV=production node dist/index.js",
-        "dev:all": "concurrently -n UI,API -c auto \"npm run dev\" \"npm run dev:server\"",
-        "dev:server": "cd server && npm run dev",
-        "check": "tsc",
-        "dev": "cross-env NODE_ENV=development tsx server/index.ts",
-        "postinstall": "echo postinstall ok"
-    },
+  "scripts": {
+    "dev": "vite",                                  
+    "dev:server": "cross-env NODE_ENV=development tsx server/index.ts",
+    "dev:all": "concurrently -n UI,API -c auto \"vite\" \"npm run dev:server\"",
+    "build": "vite build && esbuild server/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist",
+    "db:push": "drizzle-kit push",
+    "start": "cross-env NODE_ENV=production node dist/index.js",
+    "check": "tsc",
+    "postinstall": "echo postinstall ok"
+  },
     "type": "module",
     "version": "1.0.0",
     "dependencies": {
